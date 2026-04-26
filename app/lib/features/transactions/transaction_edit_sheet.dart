@@ -100,21 +100,23 @@ class _TransactionEditSheetState extends ConsumerState<TransactionEditSheet> {
       ),
     );
     if (ok != true) return;
+    if (!mounted) return;
     setState(() => _saving = true);
     try {
       await ref.read(apiProvider).deleteTransaction(widget.initial.id);
+      // Invalidate before pop so the underlying list refetches while this
+      // sheet is still in the tree (avoids a brief flicker).
       ref.invalidate(transactionsProvider);
       ref.invalidate(reportProvider);
-      if (mounted) Navigator.of(context).pop(true);
+      if (!mounted) return;
+      Navigator.of(context).pop(true);
     } catch (e) {
-      if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(SnackBar(
-          backgroundColor: T.alert,
-          content: Text('Silinemedi: $e', style: const TextStyle(color: Colors.white)),
-        ));
-      }
-    } finally {
-      if (mounted) setState(() => _saving = false);
+      if (!mounted) return;
+      setState(() => _saving = false);
+      ScaffoldMessenger.of(context).showSnackBar(SnackBar(
+        backgroundColor: T.alert,
+        content: Text('Silinemedi: $e', style: const TextStyle(color: Colors.white)),
+      ));
     }
   }
 

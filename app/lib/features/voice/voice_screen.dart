@@ -1,19 +1,33 @@
 import 'dart:async';
 import 'dart:math';
 
+import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
 import 'package:permission_handler/permission_handler.dart';
-import 'package:speech_to_text/speech_to_text.dart' as stt;
+import 'package:record/record.dart';
 
 import '../../core/state.dart';
+import '../../models/models.dart';
 import '../../theme/app_theme.dart';
 import '../../theme/tokens.dart';
 import '../../widgets/evi_icon.dart';
 import '../../widgets/evi_widgets.dart';
 import '../review/review_screen.dart';
 
+import 'bytes_loader.dart'
+    if (dart.library.io) 'bytes_loader_io.dart'
+    if (dart.library.html) 'bytes_loader_web.dart' as bytes_loader;
+
+/// Voice capture screen.
+///
+/// Records audio with the `record` package — no platform STT, so no Google
+/// Turkish language pack download prompt on Android Chrome — uploads the
+/// audio blob to the backend, and the backend pipes it through Whisper +
+/// LLM extractor. Works on Android, iOS, and web. The encoder differs by
+/// platform (Opus/webm on web, AAC/M4A on mobile); both are accepted by
+/// Whisper.
 class VoiceScreen extends ConsumerStatefulWidget {
   const VoiceScreen({super.key});
   @override
@@ -21,109 +35,135 @@ class VoiceScreen extends ConsumerStatefulWidget {
 }
 
 class _VoiceScreenState extends ConsumerState<VoiceScreen> {
-  final _stt = stt.SpeechToText();
-  bool _listening = false;
-  bool _initialized = false;
-  String _transcript = '';
+  final AudioRecorder _recorder = AudioRecorder();
+  StreamSubscription<Amplitude>? _ampSub;
+
+  bool _recording = false;
+  bool _processing = false;
+  String? _clipPath; // last finished clip's path (mobile) or blob URL (web)
   Duration _elapsed = Duration.zero;
   Timer? _timer;
   String? _error;
-  bool _processing = false;
   double _amp = 0;
 
   @override
   void initState() {
     super.initState();
-    _init();
+    _start(); // Auto-start so user just talks; can stop / retry / confirm.
   }
 
-  Future<void> _init() async {
-    // Explicitly ask for microphone permission first — speech_to_text doesn't
-    // always trigger the OS dialog on its own, and silently fails if denied.
+  Future<bool> _ensurePermission() async {
+    if (kIsWeb) return true; // Browser prompts during start().
     final mic = await Permission.microphone.request();
-    if (!mic.isGranted) {
-      setState(() {
-        _error = mic.isPermanentlyDenied
-            ? 'Mikrofon izni reddedildi. Telefon ayarlarından izin ver.'
-            : 'Mikrofon izni gerekli.';
-      });
-      return;
-    }
-
-    final ok = await _stt.initialize(
-      onError: (e) {
-        if (!mounted) return;
-        setState(() => _error = 'Konuşma tanıma hatası: ${e.errorMsg}');
-      },
-      onStatus: (s) {
-        // 'listening' | 'notListening' | 'done'
-        if (s == 'done' && mounted && _listening) {
-          setState(() => _listening = false);
-        }
-      },
-    );
-    if (!mounted) return;
-    setState(() => _initialized = ok);
-    if (!ok) {
-      setState(() {
-        _error = 'Konuşma tanıma motoru başlatılamadı. '
-            'Cihazda Türkçe konuşma motoru (Google) yüklü olmalı: '
-            'Ayarlar → Diller ve giriş → Konuşma → Konuşma tanıma motoru.';
-      });
-      return;
-    }
-
-    // Verify Turkish locale is actually available; if not, fall back gracefully.
-    final locales = await _stt.locales();
-    final hasTr = locales.any((l) => l.localeId.toLowerCase().startsWith('tr'));
-    if (!hasTr) {
-      setState(() {
-        _error = 'Türkçe konuşma tanıma yüklü değil. '
-            'Google uygulamasında Türkçe dil paketini indir, sonra tekrar dene.';
-      });
-      return;
-    }
-
-    await _start();
+    if (mic.isGranted) return true;
+    setState(() {
+      _error = mic.isPermanentlyDenied
+          ? 'Mikrofon izni reddedildi. Telefon ayarları → Uygulamalar → Evimiz → İzinler.'
+          : 'Mikrofon izni gerekli.';
+    });
+    return false;
   }
 
   Future<void> _start() async {
-    if (!_initialized) return;
-    _transcript = '';
-    _elapsed = Duration.zero;
-    _timer?.cancel();
-    _timer = Timer.periodic(const Duration(seconds: 1), (_) {
-      if (mounted) setState(() => _elapsed += const Duration(seconds: 1));
+    setState(() {
+      _error = null;
+      _elapsed = Duration.zero;
+      _clipPath = null;
     });
-    await _stt.listen(
-      onResult: (r) => setState(() => _transcript = r.recognizedWords),
-      localeId: 'tr_TR',
-      listenOptions: stt.SpeechListenOptions(
-        partialResults: true,
-        cancelOnError: false,
-        listenMode: stt.ListenMode.dictation,
-      ),
-      onSoundLevelChange: (level) {
-        setState(() => _amp = level.clamp(-2, 10));
-      },
-    );
-    setState(() => _listening = true);
+    if (!await _ensurePermission()) return;
+
+    try {
+      // Browsers natively encode webm/Opus; mobile gets AAC for max compat.
+      final config = RecordConfig(
+        encoder: kIsWeb ? AudioEncoder.opus : AudioEncoder.aacLc,
+        bitRate: 64000,
+        sampleRate: 16000,
+        numChannels: 1,
+      );
+      // Path-based on mobile, blob-based on web. The package handles temp
+      // files internally when path is null.
+      await _recorder.start(config, path: '');
+
+      _ampSub?.cancel();
+      _ampSub = _recorder
+          .onAmplitudeChanged(const Duration(milliseconds: 200))
+          .listen((amp) {
+        if (!mounted) return;
+        // amp.current is roughly -45..0 dB; normalize to 0..10 for the wave.
+        final normalized = ((amp.current + 45) / 4.5).clamp(0.0, 10.0);
+        setState(() => _amp = normalized);
+      });
+
+      _timer?.cancel();
+      _timer = Timer.periodic(const Duration(seconds: 1), (_) {
+        if (mounted) setState(() => _elapsed += const Duration(seconds: 1));
+      });
+
+      setState(() => _recording = true);
+    } catch (e) {
+      setState(() => _error = 'Kayıt başlatılamadı: $e');
+    }
   }
 
   Future<void> _stop() async {
     _timer?.cancel();
-    await _stt.stop();
-    setState(() => _listening = false);
+    await _ampSub?.cancel();
+    _ampSub = null;
+    String? out;
+    try {
+      out = await _recorder.stop();
+    } catch (_) {
+      out = null;
+    }
+    if (mounted) {
+      setState(() {
+        _recording = false;
+        _clipPath = out;
+      });
+    }
+  }
+
+  Future<void> _restart() async {
+    if (_recording) await _stop();
+    setState(() {
+      _clipPath = null;
+      _elapsed = Duration.zero;
+    });
+    await _start();
   }
 
   Future<void> _confirm() async {
-    if (_transcript.trim().length < 3) return;
-    await _stop();
-    setState(() => _processing = true);
+    if (_processing) return;
+    if (_recording) await _stop();
+    final pathOrUrl = _clipPath;
+    if (pathOrUrl == null || pathOrUrl.isEmpty) {
+      setState(() => _error = 'Kayıt bulunamadı, tekrar dene.');
+      return;
+    }
+    setState(() {
+      _processing = true;
+      _error = null;
+    });
     try {
+      final bytes = await bytes_loader.loadBytes(pathOrUrl);
+      if (bytes.isEmpty) {
+        setState(() {
+          _processing = false;
+          _error = 'Kayıt boş, tekrar dene.';
+        });
+        return;
+      }
+      final mime = kIsWeb ? 'audio/webm' : 'audio/m4a';
+      final filename = kIsWeb ? 'voice.webm' : 'voice.m4a';
+
       final api = ref.read(apiProvider);
       final me = await ref.read(meProvider.future);
-      final receipt = await api.transcribeVoice(_transcript, model: me.preferredLlm);
+      final AIExtractedReceipt receipt = await api.transcribeAudio(
+        bytes,
+        filename: filename,
+        contentType: mime,
+        model: me.preferredLlm,
+      );
       if (!mounted) return;
       await Navigator.of(context).push(MaterialPageRoute(
         builder: (_) => ReviewScreen(receipt: receipt, sourceLabel: 'SES'),
@@ -140,7 +180,8 @@ class _VoiceScreenState extends ConsumerState<VoiceScreen> {
   @override
   void dispose() {
     _timer?.cancel();
-    _stt.stop();
+    _ampSub?.cancel();
+    _recorder.dispose();
     super.dispose();
   }
 
@@ -152,12 +193,12 @@ class _VoiceScreenState extends ConsumerState<VoiceScreen> {
 
   @override
   Widget build(BuildContext context) {
+    final hasClip = _clipPath != null && _clipPath!.isNotEmpty;
     return Scaffold(
       backgroundColor: T.cream,
       body: SafeArea(
         child: Column(
           children: [
-            // Top bar
             Padding(
               padding: const EdgeInsets.fromLTRB(20, 8, 20, 16),
               child: Row(
@@ -170,7 +211,7 @@ class _VoiceScreenState extends ConsumerState<VoiceScreen> {
                         duration: const Duration(milliseconds: 600),
                         width: 8, height: 8,
                         decoration: BoxDecoration(
-                          color: _listening ? T.terracotta : T.inkFaint,
+                          color: _recording ? T.terracotta : T.inkFaint,
                           shape: BoxShape.circle,
                         ),
                       ),
@@ -184,26 +225,26 @@ class _VoiceScreenState extends ConsumerState<VoiceScreen> {
               ),
             ),
 
-            // Status / transcript
             Padding(
               padding: const EdgeInsets.fromLTRB(24, 8, 24, 0),
               child: Column(
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
                   Text(
-                    _initialized ? (_listening ? 'DİNLİYORUM…' : 'BEKLEMEDE') : 'YÜKLENİYOR',
-                    style: TLText.label(color: _listening ? T.terracotta : T.inkMute),
+                    _processing
+                        ? 'AI ÇALIŞIYOR…'
+                        : (_recording ? 'KAYIT EDİYORUM…' : (hasClip ? 'HAZIR' : 'BEKLEMEDE')),
+                    style: TLText.label(color: _recording ? T.terracotta : T.inkMute),
                   ),
                   const SizedBox(height: 8),
                   Text(
-                    _transcript.isEmpty
-                        ? '"Bugün markete 320 lira verdim..."'
-                        : '"$_transcript${_listening ? "|" : ""}"',
-                    style: TLText.display(
-                      22,
-                      color: _transcript.isEmpty ? T.inkFaint : T.ink,
-                    ),
-                    maxLines: 6,
+                    _processing
+                        ? 'Yapay zeka kaydı çözümlüyor, bekle.'
+                        : (_recording
+                            ? '"Bugün markete 320 lira verdim..." der gibi konuş.'
+                            : (hasClip ? 'Onayla → AI işlesin.' : 'Konuşmaya başla.')),
+                    style: TLText.display(20, color: T.ink),
+                    maxLines: 4,
                     overflow: TextOverflow.ellipsis,
                   ),
                 ],
@@ -211,12 +252,11 @@ class _VoiceScreenState extends ConsumerState<VoiceScreen> {
             ),
 
             const SizedBox(height: 30),
-            // Wave animation
             Padding(
               padding: const EdgeInsets.symmetric(horizontal: 24),
               child: SizedBox(
                 height: 100,
-                child: _Wave(active: _listening, amp: _amp),
+                child: _Wave(active: _recording, amp: _amp),
               ),
             ),
 
@@ -228,7 +268,6 @@ class _VoiceScreenState extends ConsumerState<VoiceScreen> {
                 child: Text(_error!, style: TLText.body(color: T.alert, size: 12)),
               ),
 
-            // Controls
             Padding(
               padding: const EdgeInsets.fromLTRB(20, 12, 20, 28),
               child: Row(
@@ -236,10 +275,7 @@ class _VoiceScreenState extends ConsumerState<VoiceScreen> {
                 children: [
                   _CtrlBtn(
                     icon: 'trash',
-                    onTap: () {
-                      _stop();
-                      setState(() { _transcript = ''; _elapsed = Duration.zero; });
-                    },
+                    onTap: _processing ? null : _restart,
                     color: T.inkMute,
                     background: T.surface,
                     border: T.line,
@@ -247,7 +283,7 @@ class _VoiceScreenState extends ConsumerState<VoiceScreen> {
                   ),
                   const SizedBox(width: 36),
                   GestureDetector(
-                    onTap: _processing ? null : (_listening ? _stop : _start),
+                    onTap: _processing ? null : (_recording ? _stop : _start),
                     child: Container(
                       width: 88, height: 88,
                       decoration: BoxDecoration(
@@ -258,7 +294,7 @@ class _VoiceScreenState extends ConsumerState<VoiceScreen> {
                       alignment: Alignment.center,
                       child: _processing
                           ? const CircularProgressIndicator(color: Colors.white, strokeWidth: 2.5)
-                          : EviIcon(_listening ? 'pause' : 'mic', size: 32, color: Colors.white, stroke: 2),
+                          : EviIcon(_recording ? 'pause' : 'mic', size: 32, color: Colors.white, stroke: 2),
                     ),
                   ),
                   const SizedBox(width: 36),
@@ -348,9 +384,6 @@ class _WavePainter extends CustomPainter {
 
   @override
   void paint(Canvas canvas, Size size) {
-    final paint = Paint()
-      ..style = PaintingStyle.fill
-      ..color = active ? T.terracotta : T.lineSoft;
     final activeBars = (32 * 0.7).round();
     const barCount = 32;
     final w = (size.width - barCount * 4) / (barCount - 1);

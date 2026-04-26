@@ -15,7 +15,13 @@ class RegisterIn(BaseModel):
     email: EmailStr
     password: str = Field(min_length=6, max_length=128)
     display_name: str = Field(min_length=1, max_length=120)
-    household_name: str = Field(default="Evimiz", min_length=1, max_length=120)
+    # Exactly one path is taken at registration:
+    #   - household_name set (and invite_code empty) → create a brand new household
+    #   - invite_code set (and household_name empty) → join the inviter's household
+    # If both are empty the user is registered with no household and must pick a path
+    # later from the in-app onboarding screen.
+    household_name: Optional[str] = Field(default=None, min_length=1, max_length=120)
+    invite_code: Optional[str] = Field(default=None, min_length=1, max_length=128)
 
 
 class LoginIn(BaseModel):

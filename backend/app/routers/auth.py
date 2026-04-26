@@ -6,9 +6,11 @@ from fastapi import APIRouter, Depends, HTTPException, status
 from sqlalchemy import select, text
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from uuid import UUID
+
 from ..config import get_settings
 from ..db import get_session
-from ..models import Household, HouseholdMember, RefreshToken, User
+from ..models import Household, HouseholdInvite, HouseholdMember, RefreshToken, User
 from ..schemas import LoginIn, RegisterIn, TokenOut, UserOut, UserPatch
 from ..security import hash_password, make_access_token, verify_password
 from ..deps import get_current_user
@@ -40,6 +42,23 @@ async def register(body: RegisterIn, session: AsyncSession = Depends(get_session
     if existing.scalar_one_or_none() is not None:
         raise HTTPException(status.HTTP_409_CONFLICT, "email already registered")
 
+    if body.invite_code and body.household_name:
+        raise HTTPException(
+            status.HTTP_400_BAD_REQUEST,
+            "Pick one: invite_code (join existing) or household_name (create new). Not both.",
+        )
+
+    invite: HouseholdInvite | None = None
+    if body.invite_code:
+        res = await session.execute(
+            select(HouseholdInvite).where(HouseholdInvite.code == body.invite_code)
+        )
+        invite = res.scalar_one_or_none()
+        if invite is None:
+            raise HTTPException(status.HTTP_404_NOT_FOUND, "invalid invite code")
+        if invite.expires_at < datetime.now(timezone.utc) or invite.accepted_at is not None:
+            raise HTTPException(status.HTTP_410_GONE, "invite expired or used")
+
     user = User(
         email=body.email,
         password_hash=hash_password(body.password),
@@ -49,26 +68,47 @@ async def register(body: RegisterIn, session: AsyncSession = Depends(get_session
     session.add(user)
     await session.flush()
 
-    household = Household(name=body.household_name, created_by=user.id, monthly_budget=18000)
-    session.add(household)
-    await session.flush()
+    household_id: UUID | None = None
 
-    member = HouseholdMember(
-        household_id=household.id,
-        user_id=user.id,
-        role="owner",
-        nickname=body.display_name.split(" ")[0],
-        avatar_color="#E8B5A0",
-    )
-    session.add(member)
+    if invite is not None:
+        # Join the inviter's household — do not create a new one for this user.
+        session.add(
+            HouseholdMember(
+                household_id=invite.household_id,
+                user_id=user.id,
+                role=invite.role,
+                nickname=body.display_name.split(" ")[0],
+                avatar_color="#E8B5A0",
+            )
+        )
+        invite.accepted_by = user.id
+        invite.accepted_at = datetime.now(timezone.utc)
+        household_id = invite.household_id
+    elif body.household_name:
+        # Create a brand new household and seat the user as owner.
+        household = Household(
+            name=body.household_name, created_by=user.id, monthly_budget=18000
+        )
+        session.add(household)
+        await session.flush()
+        session.add(
+            HouseholdMember(
+                household_id=household.id,
+                user_id=user.id,
+                role="owner",
+                nickname=body.display_name.split(" ")[0],
+                avatar_color="#E8B5A0",
+            )
+        )
+        await session.execute(
+            text(f"SELECT {_settings.database_schema}.seed_default_categories(:hh)"),
+            {"hh": household.id},
+        )
+        household_id = household.id
+    # else: user has no household yet — the app will route them to onboarding.
 
-    # seed default categories
-    await session.execute(
-        text(f"SELECT {_settings.database_schema}.seed_default_categories(:hh)"),
-        {"hh": household.id},
-    )
     await session.commit()
-    return await _issue_tokens(session, user, household.id)
+    return await _issue_tokens(session, user, household_id)
 
 
 @router.post("/login", response_model=TokenOut)

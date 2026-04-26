@@ -1,6 +1,5 @@
-import 'dart:io';
-
 import 'package:camera/camera.dart';
+import 'package:cross_file/cross_file.dart';
 import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
@@ -15,18 +14,12 @@ import '../../widgets/evi_icon.dart';
 import '../../widgets/evi_widgets.dart';
 import '../review/review_screen.dart';
 
-// On mobile we run on-device OCR (Google ML Kit). On web, the import resolves
-// to a stub that returns an empty string — user can still pick from gallery
-// and we send the raw image text-extraction request to the backend in future.
-import 'ocr_stub.dart' if (dart.library.io) 'ocr_mobile.dart' as ocr;
-
 /// In-app camera for capturing receipts/invoices.
-/// Lifecycle:
-///   1. Request CAMERA permission
-///   2. Open CameraController on the back lens
-///   3. Show live preview inside the terracotta corner-frame
-///   4. User taps the in-app shutter → takePicture() → freeze + ML Kit OCR
-///   5. Tap retry to retake, or proceed → backend AI extract → review screen
+///
+/// We no longer run on-device OCR — the captured image bytes go straight to
+/// the backend `/ai/photo/extract` endpoint, which forwards them to a Qwen
+/// vision model. This means web and mobile go through the exact same path
+/// (just the source differs: live camera on mobile, gallery picker on web).
 class PhotoScreen extends ConsumerStatefulWidget {
   const PhotoScreen({super.key});
   @override
@@ -36,8 +29,8 @@ class PhotoScreen extends ConsumerStatefulWidget {
 class _PhotoScreenState extends ConsumerState<PhotoScreen> with WidgetsBindingObserver {
   CameraController? _camera;
   Future<void>? _initFuture;
-  String? _capturedPath;
-  String? _ocrText;
+  XFile? _captured;
+  Uint8List? _previewBytes;
   bool _busy = false;
   String? _error;
   String _tab = 'fis';
@@ -132,7 +125,6 @@ class _PhotoScreenState extends ConsumerState<PhotoScreen> with WidgetsBindingOb
       await c.setFlashMode(next);
       setState(() => _flash = next);
     } on CameraException {
-      // Some lenses don't support all modes — just cycle past.
       setState(() => _flash = FlashMode.off);
     }
   }
@@ -140,55 +132,82 @@ class _PhotoScreenState extends ConsumerState<PhotoScreen> with WidgetsBindingOb
   Future<void> _shoot() async {
     final c = _camera;
     if (c == null || !c.value.isInitialized || c.value.isTakingPicture) return;
-    setState(() { _busy = true; _error = null; });
+    setState(() {
+      _busy = true;
+      _error = null;
+    });
     try {
       final file = await c.takePicture();
-      setState(() => _capturedPath = file.path);
-      final txt = await ocr.recognizeText(file.path);
+      final bytes = await file.readAsBytes();
       if (!mounted) return;
-      setState(() => _ocrText = txt);
+      setState(() {
+        _captured = file;
+        _previewBytes = bytes;
+      });
     } catch (e) {
-      setState(() => _error = 'Çekim/OCR başarısız: $e');
+      setState(() => _error = 'Çekim başarısız: $e');
     } finally {
       if (mounted) setState(() => _busy = false);
     }
   }
 
   Future<void> _pickFromGallery() async {
-    setState(() { _busy = true; _error = null; });
+    setState(() {
+      _busy = true;
+      _error = null;
+    });
     try {
       final picker = ImagePicker();
-      final f = await picker.pickImage(source: ImageSource.gallery, imageQuality: 90, maxWidth: 1800);
+      final f = await picker.pickImage(
+        source: ImageSource.gallery,
+        imageQuality: 85,
+        maxWidth: 1800,
+      );
       if (f == null) {
         setState(() => _busy = false);
         return;
       }
-      setState(() => _capturedPath = f.path);
-      final txt = await ocr.recognizeText(f.path);
+      final bytes = await f.readAsBytes();
       if (!mounted) return;
-      setState(() => _ocrText = txt);
+      setState(() {
+        _captured = f;
+        _previewBytes = bytes;
+      });
     } catch (e) {
-      setState(() => _error = 'Seçim/OCR başarısız: $e');
+      setState(() => _error = 'Seçim başarısız: $e');
     } finally {
       if (mounted) setState(() => _busy = false);
     }
   }
 
   void _retry() {
-    setState(() { _capturedPath = null; _ocrText = null; });
+    setState(() {
+      _captured = null;
+      _previewBytes = null;
+    });
   }
 
   Future<void> _process() async {
-    if (_ocrText == null || _ocrText!.trim().length < 5) {
-      setState(() => _error = 'Yazı okunamadı, daha yakından tekrar dene.');
+    final bytes = _previewBytes;
+    if (bytes == null || bytes.isEmpty) {
+      setState(() => _error = 'Görsel bulunamadı, tekrar dene.');
       return;
     }
-    setState(() => _busy = true);
+    setState(() {
+      _busy = true;
+      _error = null;
+    });
     try {
       final api = ref.read(apiProvider);
       final me = await ref.read(meProvider.future);
-      final receipt = await api.extractReceipt(
-        _ocrText!,
+      final filename = _captured?.name ?? 'photo.jpg';
+      // Camera always emits JPEG; gallery may give other types but we don't
+      // bother sniffing — backend tolerates any common image MIME.
+      final mime = _captured?.mimeType ?? 'image/jpeg';
+      final receipt = await api.extractPhoto(
+        bytes,
+        filename: filename,
+        contentType: mime,
         model: me.preferredLlm,
         hint: _tab == 'fatura' ? 'fatura' : (_tab == 'tek' ? 'tek satır' : 'fiş'),
       );
@@ -206,7 +225,7 @@ class _PhotoScreenState extends ConsumerState<PhotoScreen> with WidgetsBindingOb
 
   @override
   Widget build(BuildContext context) {
-    final hasCapture = _capturedPath != null;
+    final hasCapture = _previewBytes != null;
     final cameraReady = _camera != null && _camera!.value.isInitialized;
 
     return Scaffold(
@@ -214,7 +233,6 @@ class _PhotoScreenState extends ConsumerState<PhotoScreen> with WidgetsBindingOb
       body: SafeArea(
         child: Column(
           children: [
-            // Top bar
             Padding(
               padding: const EdgeInsets.fromLTRB(20, 8, 20, 12),
               child: Row(
@@ -244,7 +262,6 @@ class _PhotoScreenState extends ConsumerState<PhotoScreen> with WidgetsBindingOb
               ),
             ),
 
-            // Camera preview / captured frame
             Expanded(
               child: Padding(
                 padding: const EdgeInsets.fromLTRB(20, 4, 20, 8),
@@ -254,8 +271,7 @@ class _PhotoScreenState extends ConsumerState<PhotoScreen> with WidgetsBindingOb
               ),
             ),
 
-            // OCR detected line count
-            if (_ocrText != null && _ocrText!.isNotEmpty)
+            if (hasCapture && !_busy)
               Padding(
                 padding: const EdgeInsets.fromLTRB(24, 0, 24, 4),
                 child: Container(
@@ -270,7 +286,7 @@ class _PhotoScreenState extends ConsumerState<PhotoScreen> with WidgetsBindingOb
                       const EviIcon('sparkle', size: 12, color: Colors.white, stroke: 2),
                       const SizedBox(width: 6),
                       Text(
-                        'AI tarafından okundu — ${_ocrText!.split('\n').where((l) => l.trim().isNotEmpty).length} satır',
+                        'Hazır — AI ile yorumla butonuna bas.',
                         style: TLText.body(color: Colors.white, size: 12, weight: FontWeight.w600),
                         maxLines: 1,
                         overflow: TextOverflow.ellipsis,
@@ -290,7 +306,6 @@ class _PhotoScreenState extends ConsumerState<PhotoScreen> with WidgetsBindingOb
                 ),
               ),
 
-            // Tabs (only before capture)
             if (!hasCapture)
               Padding(
                 padding: const EdgeInsets.fromLTRB(20, 8, 20, 8),
@@ -327,7 +342,6 @@ class _PhotoScreenState extends ConsumerState<PhotoScreen> with WidgetsBindingOb
                 ),
               ),
 
-            // Bottom controls — different per state
             Padding(
               padding: const EdgeInsets.fromLTRB(20, 8, 20, 28),
               child: hasCapture ? _buildCapturedControls() : _buildShootControls(cameraReady),
@@ -343,7 +357,7 @@ class _PhotoScreenState extends ConsumerState<PhotoScreen> with WidgetsBindingOb
       return Stack(
         fit: StackFit.expand,
         children: [
-          Image.file(File(_capturedPath!), fit: BoxFit.cover),
+          Image.memory(_previewBytes!, fit: BoxFit.cover),
           if (_busy)
             Container(
               color: Colors.black54,
@@ -353,7 +367,7 @@ class _PhotoScreenState extends ConsumerState<PhotoScreen> with WidgetsBindingOb
                 children: [
                   CircularProgressIndicator(color: Colors.white, strokeWidth: 2.5),
                   SizedBox(height: 12),
-                  Text('Okunuyor…', style: TextStyle(color: Colors.white)),
+                  Text('AI çalışıyor…', style: TextStyle(color: Colors.white)),
                 ],
               ),
             ),
@@ -408,7 +422,6 @@ class _PhotoScreenState extends ConsumerState<PhotoScreen> with WidgetsBindingOb
       mainAxisAlignment: MainAxisAlignment.spaceBetween,
       children: [
         _SquareBtn(icon: 'image', onTap: _busy ? null : _pickFromGallery),
-        // Big shutter
         GestureDetector(
           onTap: (_busy || !cameraReady) ? null : _shoot,
           child: Container(
@@ -511,7 +524,6 @@ class _CameraFrame extends StatelessWidget {
             child: child,
           ),
         ),
-        // Corner brackets — terracotta L-shapes
         Positioned.fill(child: CustomPaint(painter: _CornersPainter())),
       ],
     );
@@ -529,22 +541,18 @@ class _CornersPainter extends CustomPainter {
     const len = 28.0;
     const inset = 6.0;
     final r = Rect.fromLTWH(inset, inset, size.width - 2 * inset, size.height - 2 * inset);
-    // top-left
     canvas.drawPath(Path()
       ..moveTo(r.left, r.top + len)
       ..lineTo(r.left, r.top)
       ..lineTo(r.left + len, r.top), paint);
-    // top-right
     canvas.drawPath(Path()
       ..moveTo(r.right - len, r.top)
       ..lineTo(r.right, r.top)
       ..lineTo(r.right, r.top + len), paint);
-    // bottom-left
     canvas.drawPath(Path()
       ..moveTo(r.left, r.bottom - len)
       ..lineTo(r.left, r.bottom)
       ..lineTo(r.left + len, r.bottom), paint);
-    // bottom-right
     canvas.drawPath(Path()
       ..moveTo(r.right - len, r.bottom)
       ..lineTo(r.right, r.bottom)

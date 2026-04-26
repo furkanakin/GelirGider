@@ -343,8 +343,12 @@ class _SwipeableRow extends ConsumerWidget {
           ],
         ),
       ),
+      // We do BOTH confirm AND the API call inside `confirmDismiss` and always
+      // return false. The list re-renders on `ref.invalidate` and Flutter
+      // disposes the row naturally — far safer than `onDismissed` racing the
+      // dismiss animation against an async network call.
       confirmDismiss: (_) async {
-        return await showDialog<bool>(
+        final ok = await showDialog<bool>(
           context: context,
           builder: (_) => AlertDialog(
             title: const Text('İşlemi sil'),
@@ -362,8 +366,7 @@ class _SwipeableRow extends ConsumerWidget {
             ],
           ),
         );
-      },
-      onDismissed: (_) async {
+        if (ok != true) return false;
         try {
           await ref.read(apiProvider).deleteTransaction(tx.id);
           ref.invalidate(transactionsProvider);
@@ -377,13 +380,13 @@ class _SwipeableRow extends ConsumerWidget {
           }
         } catch (e) {
           if (context.mounted) {
-            ref.invalidate(transactionsProvider); // restore the row
             ScaffoldMessenger.of(context).showSnackBar(SnackBar(
               backgroundColor: T.alert,
               content: Text('Silinemedi: $e', style: const TextStyle(color: Colors.white)),
             ));
           }
         }
+        return false;
       },
       child: _Row(tx: tx, cats: cats, members: members, isLast: isLast),
     );

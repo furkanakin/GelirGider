@@ -84,17 +84,22 @@ class ApiClient {
   }
 
   // ----- Auth -----
+  /// Either [householdName] (new household) or [inviteCode] (join existing) — never both.
   Future<TokenPair> register({
     required String email,
     required String password,
     required String displayName,
-    required String householdName,
+    String? householdName,
+    String? inviteCode,
   }) async {
     final r = await _dio.post('/auth/register', data: {
       'email': email,
       'password': password,
       'display_name': displayName,
-      'household_name': householdName,
+      if (householdName != null && householdName.trim().isNotEmpty)
+        'household_name': householdName.trim(),
+      if (inviteCode != null && inviteCode.trim().isNotEmpty)
+        'invite_code': inviteCode.trim(),
     });
     final pair = TokenPair.fromJson(r.data as Map<String, dynamic>);
     await _saveTokens(pair);
@@ -332,6 +337,8 @@ class ApiClient {
     return AIExtractedReceipt.fromJson(r.data as Map<String, dynamic>);
   }
 
+  /// Legacy text-only voice classify — kept for the old code path that still
+  /// has a transcript ready. New flow should use [transcribeAudio].
   Future<AIExtractedReceipt> transcribeVoice(String text, {String? model}) async {
     final r = await _dio.post('/ai/transcribe-voice', data: {
       'text': text,
@@ -340,12 +347,71 @@ class ApiClient {
     return AIExtractedReceipt.fromJson(r.data as Map<String, dynamic>);
   }
 
+  /// Upload raw audio bytes; backend runs Whisper and then the LLM extractor.
+  /// Pass the bytes recorded by the `record` package (webm/opus on web,
+  /// m4a/aac or wav on mobile — both are fine for Whisper).
+  Future<AIExtractedReceipt> transcribeAudio(
+    List<int> bytes, {
+    required String filename,
+    required String contentType,
+    String? model,
+  }) async {
+    final form = FormData.fromMap({
+      'file': MultipartFile.fromBytes(
+        bytes,
+        filename: filename,
+        contentType: DioMediaType.parse(contentType),
+      ),
+      if (model != null) 'model': model,
+    });
+    final r = await _dio.post(
+      '/ai/voice/transcribe',
+      data: form,
+      options: Options(
+        contentType: 'multipart/form-data',
+        sendTimeout: const Duration(seconds: 120),
+        receiveTimeout: const Duration(seconds: 120),
+      ),
+    );
+    return AIExtractedReceipt.fromJson(r.data as Map<String, dynamic>);
+  }
+
+  /// Legacy: client did OCR locally, sends text. Kept as fallback.
   Future<AIExtractedReceipt> extractReceipt(String ocrText, {String? model, String hint = 'fiş'}) async {
     final r = await _dio.post('/ai/extract-receipt', data: {
       'text': ocrText,
       'hint': hint,
       if (model != null) 'model': model,
     });
+    return AIExtractedReceipt.fromJson(r.data as Map<String, dynamic>);
+  }
+
+  /// Upload raw image bytes; backend uses a vision LLM directly (no client OCR).
+  Future<AIExtractedReceipt> extractPhoto(
+    List<int> bytes, {
+    required String filename,
+    required String contentType,
+    String? model,
+    String hint = 'fiş',
+  }) async {
+    final form = FormData.fromMap({
+      'file': MultipartFile.fromBytes(
+        bytes,
+        filename: filename,
+        contentType: DioMediaType.parse(contentType),
+      ),
+      'hint': hint,
+      if (model != null) 'model': model,
+    });
+    final r = await _dio.post(
+      '/ai/photo/extract',
+      data: form,
+      options: Options(
+        contentType: 'multipart/form-data',
+        sendTimeout: const Duration(seconds: 120),
+        receiveTimeout: const Duration(seconds: 180),
+      ),
+    );
     return AIExtractedReceipt.fromJson(r.data as Map<String, dynamic>);
   }
 
