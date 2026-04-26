@@ -1,0 +1,36 @@
+{
+    "name": "Evimiz — Aile gelir-gider",
+    "short_name": "Evimiz",
+    "start_url": ".",
+    "display": "standalone",
+    "background_color": "#C4593C",
+    "theme_color": "#C4593C",
+    "description": "Türkçe, AI destekli aile gelir-gider takibi.",
+    "orientation": "portrait-primary",
+    "prefer_related_applications": false,
+    "lang": "tr-TR",
+    "icons": [
+        {
+            "src": "icons/Icon-192.png",
+            "sizes": "192x192",
+            "type": "image/png"
+        },
+        {
+            "src": "icons/Icon-512.png",
+            "sizes": "512x512",
+            "type": "image/png"
+        },
+        {
+            "src": "icons/Icon-maskable-192.png",
+            "sizes": "192x192",
+            "type": "image/png",
+            "purpose": "maskable"
+        },
+        {
+            "src": "icons/Icon-maskable-512.png",
+            "sizes": "512x512",
+            "type": "image/png",
+            "purpose": "maskable"
+        }
+    ]
+}

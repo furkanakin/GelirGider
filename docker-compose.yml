@@ -1,0 +1,21 @@
+services:
+  api:
+    build: ./backend
+    container_name: evimiz-api
+    restart: unless-stopped
+    ports:
+      - "8001:8000"   # change to your preferred host port (Coolify on the server is on 8000)
+    environment:
+      DATABASE_URL: ${DATABASE_URL}
+      DATABASE_SCHEMA: ${DATABASE_SCHEMA:-evimiz}
+      JWT_SECRET: ${JWT_SECRET}
+      LLM_GATEWAY_API_KEY: ${LLM_GATEWAY_API_KEY}
+      LLM_DEFAULT_MODEL: ${LLM_DEFAULT_MODEL:-qwen3-coder-next}
+      LLM_VISION_MODEL: ${LLM_VISION_MODEL:-qwen3-coder-next}
+      ALLOWED_ORIGINS: ${ALLOWED_ORIGINS:-*}
+      ENVIRONMENT: ${ENVIRONMENT:-production}
+    volumes:
+      - evimiz-attachments:/data/attachments
+
+volumes:
+  evimiz-attachments:

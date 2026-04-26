@@ -1,0 +1,256 @@
+<!DOCTYPE html>
+<html lang="tr">
+<head>
+<meta charset="UTF-8"/>
+<title>Evimiz · Gelir & Gider</title>
+<meta name="viewport" content="width=1440"/>
+<style>
+  html, body { margin: 0; padding: 0; background: #0e0a1a; font-family: 'Geist', -apple-system, system-ui, sans-serif; }
+  * { box-sizing: border-box; }
+</style>
+</head>
+<body>
+<div id="root"></div>
+
+<script src="https://unpkg.com/react@18.3.1/umd/react.development.js" integrity="sha384-hD6/rw4ppMLGNu3tX5cjIb+uRZ7UkRJ6BPkLpg4hAu/6onKUg4lLsHAs9EBPT82L" crossorigin="anonymous"></script>
+<script src="https://unpkg.com/react-dom@18.3.1/umd/react-dom.development.js" integrity="sha384-u6aeetuaXnQ38mYT8rp6sbXaQe3NL9t+IBXmnYxwkUI2Hw4bsp2Wvmx4yRQF1uAm" crossorigin="anonymous"></script>
+<script src="https://unpkg.com/@babel/standalone@7.29.0/babel.min.js" integrity="sha384-m08KidiNqLdpJqLq95G/LEi8Qvjl/xUYll3QILypMoQ65QorJ9Lvtp2RXYGBFj1y" crossorigin="anonymous"></script>
+
+<script src="tokens.js"></script>
+
+<script type="text/babel" src="design-canvas.jsx"></script>
+<script type="text/babel" src="ios-frame.jsx"></script>
+<script type="text/babel" src="browser-window.jsx"></script>
+<script type="text/babel" src="tweaks-panel.jsx"></script>
+
+<script type="text/babel" src="parts.jsx"></script>
+<script type="text/babel" src="screens/_chrome.jsx"></script>
+<script type="text/babel" src="screens/01-home.jsx"></script>
+<script type="text/babel" src="screens/02-add-picker.jsx"></script>
+<script type="text/babel" src="screens/03-voice.jsx"></script>
+<script type="text/babel" src="screens/04-photo.jsx"></script>
+<script type="text/babel" src="screens/05-review.jsx"></script>
+<script type="text/babel" src="screens/06-list.jsx"></script>
+<script type="text/babel" src="screens/07-weekly.jsx"></script>
+<script type="text/babel" src="screens/08-monthly.jsx"></script>
+<script type="text/babel" src="screens/09-categories.jsx"></script>
+<script type="text/babel" src="screens/10-family.jsx"></script>
+<script type="text/babel" src="screens/11-web.jsx"></script>
+
+<script type="text/babel" data-presets="react">
+// T is on window from tokens.js
+
+const TWEAK_DEFAULTS = /*EDITMODE-BEGIN*/{
+  "theme": "glow",
+  "accent": "glow"
+}/*EDITMODE-END*/;
+
+// Tema paletleri — tam token swap
+const THEMES = {
+  warm: {
+    cream: '#FAF7F2', paper: '#F2EDE3', paperDeep: '#E8E0D0',
+    surface: '#FFFFFF',
+    ink: '#1A1A1A', inkSoft: '#2B2622', inkMute: '#7A6F65', inkFaint: '#B5A99B',
+    line: '#E5DCC9', lineSoft: '#EFE8DA',
+    statusInk: '#1A1A1A', phoneShell: '#1A1A1A',
+    bgImage: 'none',
+  },
+  light: {
+    cream: '#FFFFFF', paper: '#F4F4F4', paperDeep: '#E8E8E8',
+    surface: '#FFFFFF',
+    ink: '#0A0A0A', inkSoft: '#171717', inkMute: '#737373', inkFaint: '#A3A3A3',
+    line: '#E5E5E5', lineSoft: '#F0F0F0',
+    statusInk: '#0A0A0A', phoneShell: '#0A0A0A',
+    bgImage: 'none',
+  },
+  dark: {
+    cream: '#0E0D0B', paper: '#1A1815', paperDeep: '#252220',
+    surface: '#1A1815',
+    ink: '#F4EFE6', inkSoft: '#E2DACD', inkMute: '#8A7F73', inkFaint: '#5C544B',
+    line: '#2C2925', lineSoft: '#211E1B',
+    statusInk: '#F4EFE6', phoneShell: '#000000',
+    bgImage: 'none',
+  },
+  glow: {
+    // Premium koyu — koyu indigo-mor + renkli gradient bg
+    cream: '#0e0a1a', paper: '#181233', paperDeep: '#221a44',
+    surface: '#181233',
+    ink: '#f4f1ff', inkSoft: '#dcd5f5', inkMute: '#8a83a8', inkFaint: '#5a5478',
+    line: '#3a2d6b', lineSoft: '#2d2255',
+    statusInk: '#f4f1ff', phoneShell: '#000000',
+    bgImage: 'radial-gradient(ellipse 900px 700px at 20% 10%, #2a1454 0%, transparent 55%), radial-gradient(ellipse 700px 800px at 85% 90%, #4a1a48 0%, transparent 50%), radial-gradient(ellipse 500px 600px at 50% 60%, #1a2454 0%, transparent 60%), #0e0a1a',
+  },
+};
+const ACCENTS = {
+  terracotta: { primary: '#C4593C', secondary: '#3D5A4A', primaryTint: '#F6E4D8', secondaryTint: '#DCE7DF' },
+  forest:     { primary: '#3D5A4A', secondary: '#C4593C', primaryTint: '#DCE7DF', secondaryTint: '#F6E4D8' },
+  ocean:      { primary: '#2D5A7A', secondary: '#C9933A', primaryTint: '#D7E4EE', secondaryTint: '#F6E9C0' },
+  glow:       { primary: '#ff5e7a', secondary: '#8b5cff', primaryTint: '#3a1a30', secondaryTint: '#2a1a4a' },
+};
+
+function applyTheme(theme, accent) {
+  const t = THEMES[theme] || THEMES.warm;
+  const a = ACCENTS[accent] || ACCENTS.terracotta;
+  const isDark = theme === 'dark' || theme === 'glow';
+  const isGlow = theme === 'glow';
+  Object.assign(window.EVI_TOKENS, {
+    cream: t.cream, paper: t.paper, paperDeep: t.paperDeep,
+    ink: t.ink, inkSoft: t.inkSoft, inkMute: t.inkMute, inkFaint: t.inkFaint,
+    line: t.line, lineSoft: t.lineSoft,
+    surface: isGlow ? 'linear-gradient(155deg, rgba(34,26,68,0.85), rgba(24,18,51,0.95))' : t.surface,
+    surfaceFlat: t.surface,
+    statusInk: t.statusInk, phoneShell: t.phoneShell,
+    isDark, isGlow,
+    accentGradient: isGlow ? 'linear-gradient(135deg, #ff5e7a 0%, #8b5cff 100%)' : a.primary,
+    glowShadow: isGlow ? '0 6px 20px rgba(255,94,122,0.4), 0 3px 10px rgba(139,92,255,0.25)' : 'none',
+    terracotta: a.primary, terraDeep: a.primary,
+    terraTint: isGlow ? a.primaryTint : (isDark ? '#3A201A' : a.primaryTint),
+    terraSoft: isGlow ? '#ff5e7a' : '#E8B5A0',
+    forest: a.secondary,
+    forestDeep: isGlow ? '#8b5cff' : '#2A4234',
+    forestTint: isGlow ? a.secondaryTint : (isDark ? '#1F2D26' : a.secondaryTint),
+    forestSoft: isGlow ? '#8b5cff' : '#9BB3A4',
+    butterTint: isGlow ? '#3a2a1a' : (isDark ? '#3A2F1A' : '#F6E9C0'),
+  });
+  const cv = document.querySelector('[data-dc-viewport]');
+  if (cv) { cv.style.background = t.bgImage !== 'none' ? t.bgImage : t.cream; }
+  document.body.style.background = t.bgImage !== 'none' ? t.bgImage : t.cream;
+}
+
+function Phone({ children }) {
+  const TT = window.EVI_TOKENS;
+  return (
+    <div style={{
+      width: 320, height: 680, borderRadius: 44,
+      background: TT.phoneShell || '#1A1A1A',
+      padding: 8,
+      boxShadow: TT.isDark
+        ? '0 30px 60px rgba(0,0,0,0.5), 0 4px 12px rgba(0,0,0,0.3)'
+        : '0 30px 60px rgba(60,40,20,0.18), 0 4px 12px rgba(60,40,20,0.08)',
+      position: 'relative',
+    }}>
+      <div style={{
+        width: '100%', height: '100%', borderRadius: 36,
+        overflow: 'hidden', position: 'relative', background: TT.cream,
+      }}>
+        {/* Status bar */}
+        <div style={{
+          position: 'absolute', top: 0, left: 0, right: 0, height: 44,
+          padding: '14px 24px 0', display: 'flex', justifyContent: 'space-between', alignItems: 'center',
+          zIndex: 10,
+          fontFamily: 'Geist, -apple-system, system-ui', fontWeight: 600, fontSize: 13,
+          color: TT.statusInk || TT.ink,
+        }}>
+          <div>9:41</div>
+          <div style={{ display: 'flex', gap: 5, alignItems: 'center' }}>
+            <svg width="16" height="10" viewBox="0 0 16 10"><rect x="0" y="6" width="2.5" height="4" rx="0.5" fill="currentColor"/><rect x="3.5" y="4" width="2.5" height="6" rx="0.5" fill="currentColor"/><rect x="7" y="2" width="2.5" height="8" rx="0.5" fill="currentColor"/><rect x="10.5" y="0" width="2.5" height="10" rx="0.5" fill="currentColor"/></svg>
+            <svg width="22" height="10" viewBox="0 0 22 10"><rect x="0.5" y="0.5" width="18" height="9" rx="2.5" stroke="currentColor" fill="none" strokeOpacity="0.4"/><rect x="2" y="2" width="15" height="6" rx="1.5" fill="currentColor"/><path d="M20 3.5V6.5C20.5 6.3 21 5.7 21 5C21 4.3 20.5 3.7 20 3.5Z" fill="currentColor" fillOpacity="0.4"/></svg>
+          </div>
+        </div>
+        {/* Dynamic island */}
+        <div style={{
+          position: 'absolute', top: 10, left: '50%', transform: 'translateX(-50%)',
+          width: 100, height: 28, borderRadius: 999, background: '#000', zIndex: 9,
+        }}/>
+        {/* Home indicator */}
+        <div style={{
+          position: 'absolute', bottom: 6, left: '50%', transform: 'translateX(-50%)',
+          width: 120, height: 4, borderRadius: 999,
+          background: TT.isDark ? 'rgba(255,255,255,0.4)' : 'rgba(0,0,0,0.35)', zIndex: 11,
+        }}/>
+        {children}
+      </div>
+    </div>
+  );
+}
+
+const PA = (id, label, Cmp) => (
+  <DCArtboard id={id} label={label} width={336} height={696}>
+    <Phone><Cmp/></Phone>
+  </DCArtboard>
+);
+
+function App() {
+  const [tw, setTw] = useTweaks(TWEAK_DEFAULTS);
+  const [, force] = React.useReducer(x => x + 1, 0);
+
+  React.useEffect(() => {
+    applyTheme(tw.theme, tw.accent);
+    force();
+  }, [tw.theme, tw.accent]);
+
+  const t = THEMES[tw.theme] || THEMES.warm;
+
+  return (
+    <>
+      <DesignCanvas style={{ background: t.bg }}>
+
+        <DCSection id="overview" title="Evimiz · Gelir & Gider Takibi" subtitle="Aile odaklı, AI destekli — iOS, Android ve web. Türkçe arayüz, sıcak palet.">
+          {PA('home', '01 · Ana ekran', window.HomeScreen)}
+        </DCSection>
+
+        <DCSection id="add-flow" title="Hızlı kayıt akışı" subtitle="Üç giriş yöntemi — sesli, fotoğraf, yazılı — hepsi aynı AI onay ekranında buluşur.">
+          {PA('add-picker', '02 · Ekleme seçici', window.AddPickerScreen)}
+          {PA('voice',      '03 · Sesli kayıt',   window.VoiceScreen)}
+          {PA('photo',      '04 · Fiş tarama',    window.PhotoScreen)}
+          {PA('review',     '05 · AI onay & düzenle', window.ReviewScreen)}
+        </DCSection>
+
+        <DCSection id="data" title="Defter" subtitle="İşlemler, kategoriler.">
+          {PA('list',       '06 · İşlem listesi', window.TransactionsScreen)}
+          {PA('categories', '09 · Kategoriler',   window.CategoriesScreen)}
+        </DCSection>
+
+        <DCSection id="reports" title="Raporlar" subtitle="Görsel/duygusal — büyük rakamlar, AI hikayesi.">
+          {PA('weekly',  '07 · Haftalık', window.WeeklyScreen)}
+          {PA('monthly', '08 · Aylık',    window.MonthlyScreen)}
+        </DCSection>
+
+        <DCSection id="people" title="Aile" subtitle="Birden fazla üye — kim ne harcadı, kim ne kazandı.">
+          {PA('family', '10 · Aile & ayarlar', window.FamilyScreen)}
+        </DCSection>
+
+        <DCSection id="web" title="Web — responsive görünüm" subtitle="Aynı veri, geniş ekran düzeniyle. Sol kenar çubuğu navigasyon, üç sütunlu özet.">
+          <DCArtboard id="web" label="11 · Web dashboard" width={1240} height={760}>
+            <ChromeWindow url="evimiz.app" tabs={[{ title: 'Evimiz · Demir Ailesi' }]} width={1240} height={760}>
+              <WebDashboard/>
+            </ChromeWindow>
+          </DCArtboard>
+        </DCSection>
+
+      </DesignCanvas>
+
+      <TweaksPanel title="Tweaks · Tema">
+        <TweakSection title="Arka plan">
+          <TweakRadio
+            value={tw.theme}
+            onChange={v => setTw({ theme: v })}
+            options={[
+              { value: 'glow',  label: 'Glow · indigo–mor' },
+              { value: 'warm',  label: 'Sıcak krem' },
+              { value: 'light', label: 'Saf beyaz'  },
+              { value: 'dark',  label: 'Koyu mod'   },
+            ]}
+          />
+        </TweakSection>
+        <TweakSection title="Vurgu rengi">
+          <TweakRadio
+            value={tw.accent}
+            onChange={v => setTw({ accent: v })}
+            options={[
+              { value: 'glow',       label: 'Mercan → mor (gradient)' },
+              { value: 'terracotta', label: 'Terracotta · orman' },
+              { value: 'forest',     label: 'Orman · terracotta' },
+              { value: 'ocean',      label: 'Okyanus · bal' },
+            ]}
+          />
+        </TweakSection>
+      </TweaksPanel>
+    </>
+  );
+}
+
+ReactDOM.createRoot(document.getElementById('root')).render(<App/>);
+</script>
+</body>
+</html>
