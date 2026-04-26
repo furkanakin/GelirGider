@@ -47,15 +47,86 @@
       background: url('icons/Icon-192.png') center/contain no-repeat;
     }
     #loading .label { font-size: 14px; color: #7A6F65; }
+
+    /* iOS Safari PWA install hint — appears at the bottom for iPhone/iPad
+       Safari users that haven't yet added the app to their home screen.
+       Apple doesn't expose a beforeinstallprompt API, so this is the only
+       way to nudge iOS users toward "Share → Add to Home Screen". */
+    #ios-install {
+      position: fixed; left: 12px; right: 12px; bottom: 16px; z-index: 9999;
+      background: #1A1A1A; color: #fff; border-radius: 16px; padding: 14px 16px;
+      box-shadow: 0 12px 32px rgba(0,0,0,0.28);
+      display: none; align-items: center; gap: 12px;
+      font-family: -apple-system, system-ui, sans-serif;
+      transform: translateY(120%); transition: transform 220ms ease;
+    }
+    #ios-install.visible { transform: translateY(0); display: flex; }
+    #ios-install .icon {
+      width: 36px; height: 36px; border-radius: 10px; flex-shrink: 0;
+      background: #C4593C url('icons/Icon-192.png') center/24px no-repeat;
+    }
+    #ios-install .body { flex: 1; line-height: 1.35; }
+    #ios-install .title { font-weight: 700; font-size: 14px; }
+    #ios-install .sub { font-size: 12px; opacity: 0.8; margin-top: 2px; }
+    #ios-install .sub b { color: #E8B5A0; font-weight: 600; }
+    #ios-install .close {
+      background: none; border: 0; color: #fff; opacity: 0.6; font-size: 22px;
+      cursor: pointer; padding: 0 4px; line-height: 1;
+    }
+    @media (min-width: 720px) { #ios-install { left: auto; right: 24px; bottom: 24px; max-width: 360px; } }
   </style>
   <link rel="manifest" href="manifest.json">
 </head>
 <body>
   <div id="loading"><div class="dot"></div><div class="label">Evimiz yükleniyor…</div></div>
+  <div id="ios-install" role="dialog" aria-label="Uygulamayı yükle">
+    <div class="icon" aria-hidden="true"></div>
+    <div class="body">
+      <div class="title">Uygulamayı yükle</div>
+      <div class="sub">Safari'de <b>Paylaş</b> → <b>Ana Ekrana Ekle</b> ile evimiz cebine düşsün.</div>
+    </div>
+    <button class="close" type="button" aria-label="Kapat" id="ios-install-close">×</button>
+  </div>
   <script>
     window.addEventListener('flutter-first-frame', () => {
       document.getElementById('loading')?.remove();
     });
+
+    // iOS Safari PWA install banner.
+    // Show only when:
+    //   - User-agent looks like iPhone/iPod/iPad Safari (mobile or iPadOS)
+    //   - We're NOT already running standalone (added to home screen)
+    //   - User hasn't dismissed it permanently
+    (function () {
+      try {
+        var ua = navigator.userAgent || '';
+        var isIPad = /\bMacintosh\b/.test(ua) && 'ontouchend' in document; // iPadOS reports as Mac
+        var isIos = /iPad|iPhone|iPod/.test(ua) || isIPad;
+        var isStandalone =
+          window.matchMedia('(display-mode: standalone)').matches ||
+          window.navigator.standalone === true;
+        var dismissed = localStorage.getItem('evimiz.iosInstallDismissed');
+        if (!isIos || isStandalone || dismissed === '1') return;
+
+        var el = document.getElementById('ios-install');
+        // Surface a few seconds after first frame so it doesn't fight with the
+        // loading splash / login mount.
+        var show = function () {
+          el.classList.add('visible');
+        };
+        if (document.readyState === 'complete') {
+          setTimeout(show, 1500);
+        } else {
+          window.addEventListener('flutter-first-frame', function () { setTimeout(show, 1500); });
+        }
+        document.getElementById('ios-install-close').addEventListener('click', function () {
+          el.classList.remove('visible');
+          try { localStorage.setItem('evimiz.iosInstallDismissed', '1'); } catch (e) {}
+        });
+      } catch (e) {
+        // Never let banner code break the app.
+      }
+    })();
   </script>
   <script src="flutter_bootstrap.js" async></script>
 </body>
