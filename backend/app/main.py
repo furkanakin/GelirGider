@@ -5,7 +5,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import ORJSONResponse
 
 from .config import get_settings
-from .routers import accounts, ai, auth, categories, households, notifications, recurring, reports, transactions
+from .routers import accounts, admin, ai, auth, categories, households, notifications, recurring, reports, transactions
 
 _settings = get_settings()
 
@@ -44,3 +44,4 @@ app.include_router(ai.router, prefix="/api")
 app.include_router(reports.router, prefix="/api")
 app.include_router(recurring.router, prefix="/api")
 app.include_router(notifications.router, prefix="/api")
+app.include_router(admin.router, prefix="/api")

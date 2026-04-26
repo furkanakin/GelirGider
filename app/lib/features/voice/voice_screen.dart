@@ -5,6 +5,7 @@ import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
+import 'package:path_provider/path_provider.dart';
 import 'package:permission_handler/permission_handler.dart';
 import 'package:record/record.dart';
 
@@ -80,9 +81,11 @@ class _VoiceScreenState extends ConsumerState<VoiceScreen> {
         sampleRate: 16000,
         numChannels: 1,
       );
-      // Path-based on mobile, blob-based on web. The package handles temp
-      // files internally when path is null.
-      await _recorder.start(config, path: '');
+      // Mobile: pass a real writable path or the package's underlying file
+      // handle won't open and start() throws / crashes. Web ignores the path
+      // and uses an in-memory blob instead.
+      final path = await _resolveOutputPath();
+      await _recorder.start(config, path: path);
 
       _ampSub?.cancel();
       _ampSub = _recorder
@@ -103,6 +106,13 @@ class _VoiceScreenState extends ConsumerState<VoiceScreen> {
     } catch (e) {
       setState(() => _error = 'Kayıt başlatılamadı: $e');
     }
+  }
+
+  Future<String> _resolveOutputPath() async {
+    if (kIsWeb) return ''; // ignored by record_web
+    final dir = await getTemporaryDirectory();
+    final ts = DateTime.now().millisecondsSinceEpoch;
+    return '${dir.path}/evimiz_voice_$ts.m4a';
   }
 
   Future<void> _stop() async {
