@@ -32,7 +32,12 @@ COPY app /src/app
 
 WORKDIR /src/app
 RUN flutter pub get
-RUN flutter build web --release --dart-define=API_BASE_URL=${API_BASE_URL}
+# `--pwa-strategy=none` disables Flutter's offline-first service worker. Every
+# visit fetches fresh assets, so users never see a stale build after we ship
+# changes — at the cost of needing network on first paint (we never relied on
+# offline anyway). Combined with nginx's no-cache header on index.html this
+# gives reliable instant-update behavior across browsers.
+RUN flutter build web --release --pwa-strategy=none --dart-define=API_BASE_URL=${API_BASE_URL}
 
 # ---------- Stage 2: nginx static server ----------
 FROM nginx:alpine AS runtime
