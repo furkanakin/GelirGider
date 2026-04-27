@@ -232,6 +232,12 @@ class FamilyScreen extends ConsumerWidget {
                       onTap: () => context.push('/accounts'),
                     ),
                     _SettingsRow(
+                      icon: 'tag',
+                      label: 'Kategoriler',
+                      value: '',
+                      onTap: () => context.go('/categories'),
+                    ),
+                    _SettingsRow(
                       icon: 'refresh',
                       label: 'Tekrar eden kayıtlar',
                       value: '',
