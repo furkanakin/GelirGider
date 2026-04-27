@@ -18,8 +18,14 @@ class Settings(BaseSettings):
     llm_default_model: str = "qwen3-coder-next"
     llm_vision_model: str = "qwen2.5-vl-72b-instruct"
     llm_vision_fallbacks: str = "qwen-vl-max,qwen-vl-plus,gpt-4o-mini,gpt-4o,gemini-1.5-flash"
-    llm_transcription_model: str = "whisper-1"
-    llm_transcription_fallbacks: str = "gpt-4o-mini-transcribe,gpt-4o-transcribe"
+    # Transcription routes through Groq Cloud — llmgateway.io does not expose
+    # /audio/transcriptions, so we keep transcription on a separate
+    # OpenAI-compatible endpoint. Groq's whisper-large-v3-turbo handles
+    # Turkish and accepts both webm (web) and m4a (mobile) directly.
+    transcription_base_url: str = "https://api.groq.com/openai/v1"
+    transcription_api_key: str = ""
+    llm_transcription_model: str = "whisper-large-v3-turbo"
+    llm_transcription_fallbacks: str = "whisper-large-v3"
     llm_fallback_models: str = "qwen3-coder-next,gpt-4o-mini,claude-3-5-haiku-20241022,gemini-1.5-flash,llama-3.3-70b-versatile,glm-5.1,kimi-k2.6,minimax-m2.7"
 
     attachments_dir: str = "/data/attachments"

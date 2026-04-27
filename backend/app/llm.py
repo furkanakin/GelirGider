@@ -87,6 +87,12 @@ class LLMClient:
     ):
         self.base_url = (base_url or _settings.llm_gateway_base_url).rstrip("/")
         self.api_key = api_key or _settings.llm_gateway_api_key
+        # Transcription has its own endpoint + key because llmgateway.io
+        # doesn't proxy /audio/transcriptions. Falls back to the main key
+        # if transcription_api_key isn't set, so older single-key
+        # deployments keep working.
+        self.transcription_base_url = _settings.transcription_base_url.rstrip("/")
+        self.transcription_api_key = _settings.transcription_api_key or self.api_key
         self._client = httpx.AsyncClient(timeout=timeout)
 
     async def aclose(self) -> None:
@@ -255,10 +261,14 @@ class LLMClient:
         language: str = "tr",
         model: str | None = None,
     ) -> tuple[str, dict[str, Any]]:
-        """OpenAI-style /audio/transcriptions multipart upload."""
-        if not self.api_key:
+        """OpenAI-style /audio/transcriptions multipart upload.
+
+        Routes to `transcription_base_url` (default Groq Cloud) rather than
+        the chat gateway, since llmgateway.io doesn't proxy this path.
+        """
+        if not self.transcription_api_key:
             raise LLMError(
-                "LLM_GATEWAY_API_KEY is not configured. Set it in backend/.env to enable AI features."
+                "TRANSCRIPTION_API_KEY is not configured. Set it in backend/.env (Groq key) to enable voice transcription."
             )
         models_to_try = [model or _settings.llm_transcription_model, *self.transcription_fallbacks]
         seen: set[str] = set()
@@ -274,8 +284,8 @@ class LLMClient:
                 files = {"file": (filename, audio_bytes, content_type)}
                 data = {"model": m, "language": language, "response_format": "json"}
                 resp = await self._client.post(
-                    f"{self.base_url}/audio/transcriptions",
-                    headers={"Authorization": f"Bearer {self.api_key}"},
+                    f"{self.transcription_base_url}/audio/transcriptions",
+                    headers={"Authorization": f"Bearer {self.transcription_api_key}"},
                     files=files,
                     data=data,
                 )
