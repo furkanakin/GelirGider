@@ -29,8 +29,10 @@ router = APIRouter(prefix="/ai", tags=["ai"])
 _settings = get_settings()
 
 
-def _user_prompt(text: str, hint: str | None = None) -> str:
+def _user_prompt(text: str, hint: str | None = None, category_block: str | None = None) -> str:
     parts = []
+    if category_block:
+        parts.append(category_block)
     if hint:
         parts.append(f"Bağlam: {hint}")
     parts.append(f"Kullanıcı girdisi:\n{text.strip()}")
@@ -44,6 +46,35 @@ async def _resolve_categories(slug_set: set[str], household_id, session: AsyncSe
         select(Category).where(Category.household_id == household_id, Category.slug.in_(slug_set))
     )
     return {c.slug: c for c in res.scalars().all()}
+
+
+async def _household_category_block(household_id, session: AsyncSession) -> str:
+    """Render the household's active categories so the LLM can only pick from
+    them. Includes user-added ones — that's the whole point: AI was previously
+    blind to non-builtin slugs and either dropped them on the floor or
+    hallucinated."""
+    res = await session.execute(
+        select(Category)
+        .where(Category.household_id == household_id, Category.is_archived.is_(False))
+        .order_by(Category.kind, Category.sort_order, Category.label)
+    )
+    cats = list(res.scalars().all())
+    if not cats:
+        return "Bu hanenin tanımlı kategorisi yok — `category_slug` null bırak."
+
+    lines = ["Bu hanede tanımlı kategoriler (category_slug için SADECE bunlardan birini seç):"]
+    expense = [c for c in cats if c.kind == "expense"]
+    income = [c for c in cats if c.kind == "income"]
+    if expense:
+        lines.append("Gider:")
+        for c in expense:
+            lines.append(f"- {c.slug}: {c.label}")
+    if income:
+        lines.append("Gelir:")
+        for c in income:
+            lines.append(f"- {c.slug}: {c.label}")
+    lines.append("Hiçbiri uymuyorsa `category_slug` null olsun. Listede olmayan slug'ı asla uydurma.")
+    return "\n".join(lines)
 
 
 def _coerce_lines(parsed: dict) -> list[dict]:
@@ -137,10 +168,11 @@ async def _extract(
     )
     session.add(job)
     await session.flush()
+    category_block = await _household_category_block(member.household_id, session)
     try:
         parsed, meta = await llm.chat_json(
             system=SYSTEM_EXTRACTOR,
-            user=_user_prompt(text, hint),
+            user=_user_prompt(text, hint, category_block=category_block),
             model=model,
         )
     except LLMError as exc:
@@ -250,10 +282,11 @@ async def voice_transcribe(
     job.input_text = transcript
     await session.flush()
 
+    category_block = await _household_category_block(member.household_id, session)
     try:
         parsed, meta = await llm.chat_json(
             system=SYSTEM_EXTRACTOR,
-            user=_user_prompt(transcript, "sesli kayıt transkripti"),
+            user=_user_prompt(transcript, "sesli kayıt transkripti", category_block=category_block),
             model=model,
         )
     except LLMError as exc:
@@ -297,10 +330,11 @@ async def photo_extract(
     session.add(job)
     await session.flush()
 
+    category_block = await _household_category_block(member.household_id, session)
     try:
         parsed, meta = await llm.chat_json_with_image(
             system=SYSTEM_VISION_EXTRACTOR,
-            user_text=f"Bağlam: {hint or 'fiş/fatura'}\n\nGörseldeki bilgileri çıkart.",
+            user_text=f"{category_block}\n\nBağlam: {hint or 'fiş/fatura'}\n\nGörseldeki bilgileri çıkart.",
             image_bytes=image,
             image_mime=file.content_type or "image/jpeg",
             model=model,

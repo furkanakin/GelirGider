@@ -25,52 +25,41 @@ logger = logging.getLogger(__name__)
 _settings = get_settings()
 
 
-CATEGORY_SCHEMA_HINT = (
-    "Available expense categories (slug → label):\n"
-    "- market: Market\n"
-    "- fatura: Faturalar\n"
-    "- ulasim: Ulaşım\n"
-    "- yemek: Yemek\n"
-    "- cocuk: Çocuklar\n"
-    "- saglik: Sağlık\n"
-    "- eglence: Eğlence\n"
-    "- kira: Kira\n"
-    "Income categories:\n"
-    "- maas: Maaş\n"
-    "- ek: Ek Gelir\n"
-)
+# NOTE: The available category list is no longer hardcoded into the system
+# prompt. Each household defines its own categories (built-ins + user-added),
+# so the router pulls them at request time and injects them into the user
+# message via `build_category_context()`. Keeping this out of the system
+# prompt also lets us cache the system prompt unchanged across households.
 
 
-SYSTEM_EXTRACTOR = f"""You are a Turkish household-finance assistant for the Evimiz app.
+SYSTEM_EXTRACTOR = """You are a Turkish household-finance assistant for the Evimiz app.
 
 Given a user's free-form text OR an OCR-extracted receipt, return a strict JSON object with ALL transactions found.
 
 Output schema (no markdown, no prose, JUST JSON):
-{{
+{
   "lines": [
-    {{
+    {
       "merchant": string | null,
       "amount": number,                     // positive
       "currency": "TRY",
       "kind": "expense" | "income",
-      "category_slug": string | null,       // pick from list below
+      "category_slug": string | null,       // pick from the list provided in the user message
       "actor_nickname": string | null,      // who spent (e.g. "Ayşe", "Mehmet"), if mentioned
       "note": string | null,
       "confidence": number,                 // 0..1
       "occurred_at": string | null          // ISO 8601 if explicit, else null
-    }}
+    }
   ],
   "summary": string                         // 1-line Turkish summary of what was extracted
-}}
-
-{CATEGORY_SCHEMA_HINT}
+}
 
 Rules:
 - Numbers like "320 lira", "847,50 TL", "1.250 ₺" → amount in NUMBER form (847.50, 1250).
 - Use period as decimal separator in JSON.
 - If the user mentions multiple items, return one line per logical purchase (don't split single-receipt items unless asked).
 - For receipts, use the GRAND TOTAL as one line unless user explicitly wants line-by-line.
-- If unsure of category, set null. Never invent slugs not in the list.
+- The user message will list the household's available category slugs. Pick a `category_slug` ONLY from that list. If none fits, set `category_slug` to null. Never invent slugs.
 - Output MUST be valid JSON. No backticks, no commentary.
 """
 

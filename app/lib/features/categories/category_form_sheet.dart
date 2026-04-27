@@ -23,8 +23,12 @@ const kCategoryColors = [
   ('#2A4234', '#DCE7DF'),
 ];
 
-Future<bool?> showCategoryFormSheet(BuildContext context, {Category? existing, required String defaultKind}) {
-  return showModalBottomSheet<bool>(
+/// Opens the category form. On a successful CREATE, returns the freshly
+/// created [Category] so callers (e.g. the AI review screen) can auto-select
+/// it in their dropdown without forcing the user to re-pick. Returns null on
+/// cancel, archive, or edit.
+Future<Category?> showCategoryFormSheet(BuildContext context, {Category? existing, required String defaultKind}) {
+  return showModalBottomSheet<Category>(
     context: context,
     isScrollControlled: true,
     useSafeArea: true,
@@ -72,6 +76,7 @@ class _CategoryFormSheetState extends ConsumerState<_CategoryFormSheet> {
     setState(() => _saving = true);
     try {
       final api = ref.read(apiProvider);
+      Category? created;
       if (_isEdit) {
         await api.patchCategory(widget.existing!.id, {
           'label': _label.text.trim(),
@@ -84,7 +89,7 @@ class _CategoryFormSheetState extends ConsumerState<_CategoryFormSheet> {
         final slug = _slug.text.trim().isEmpty
             ? _label.text.trim().toLowerCase().replaceAll(RegExp(r'[^a-z0-9]+'), '_').replaceAll(RegExp(r'^_+|_+$'), '')
             : _slug.text.trim();
-        await api.createCategory({
+        created = await api.createCategory({
           'slug': slug.isEmpty ? 'kat_${DateTime.now().millisecondsSinceEpoch}' : slug,
           'label': _label.text.trim(),
           'kind': _kind,
@@ -95,7 +100,9 @@ class _CategoryFormSheetState extends ConsumerState<_CategoryFormSheet> {
         });
       }
       ref.invalidate(categoriesProvider);
-      if (mounted) Navigator.of(context).pop(true);
+      // On create, hand the new Category back so the caller (e.g. review
+      // screen) can auto-select it. On edit, just pop.
+      if (mounted) Navigator.of(context).pop(created);
     } catch (e) {
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(SnackBar(
@@ -110,15 +117,18 @@ class _CategoryFormSheetState extends ConsumerState<_CategoryFormSheet> {
 
   Future<void> _delete() async {
     if (!_isEdit) return;
+    // Use the dialog's own context (`dialogCtx`) when popping — the outer
+    // sheet sits on the local navigator while the dialog is on the root
+    // navigator, so popping with the outer context closes the *sheet*.
     final ok = await showDialog<bool>(
       context: context,
-      builder: (_) => AlertDialog(
+      builder: (dialogCtx) => AlertDialog(
         title: const Text('Kategoriyi sil'),
         content: const Text('Bu kategori arşivlenecek. Geçmiş işlemler etkilenmez.'),
         actions: [
-          TextButton(onPressed: () => Navigator.of(context).pop(false), child: const Text('Vazgeç')),
+          TextButton(onPressed: () => Navigator.of(dialogCtx).pop(false), child: const Text('Vazgeç')),
           FilledButton(
-            onPressed: () => Navigator.of(context).pop(true),
+            onPressed: () => Navigator.of(dialogCtx).pop(true),
             style: FilledButton.styleFrom(backgroundColor: T.alert),
             child: const Text('Sil'),
           ),
@@ -130,7 +140,9 @@ class _CategoryFormSheetState extends ConsumerState<_CategoryFormSheet> {
     try {
       await ref.read(apiProvider).archiveCategory(widget.existing!.id);
       ref.invalidate(categoriesProvider);
-      if (mounted) Navigator.of(context).pop(true);
+      // Sheet's pop type is Category? — pop with null on archive (no
+      // category to hand back).
+      if (mounted) Navigator.of(context).pop();
     } finally {
       if (mounted) setState(() => _saving = false);
     }

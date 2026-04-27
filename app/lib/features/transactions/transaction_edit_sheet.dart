@@ -8,6 +8,9 @@ import '../../theme/app_theme.dart';
 import '../../theme/tokens.dart';
 import '../../widgets/evi_icon.dart';
 import '../../widgets/evi_widgets.dart';
+import '../categories/category_form_sheet.dart';
+
+const String _kNewCategorySentinel = '__new_category__';
 
 /// Bottom sheet for inspecting / editing / deleting a single transaction.
 ///
@@ -191,6 +194,23 @@ class _TransactionEditSheetState extends ConsumerState<TransactionEditSheet> {
                       final filtered = cs.where((c) => c.kind == _kind).toList();
                       final hasMatch = filtered.any((c) => c.id == _categoryId);
                       final value = hasMatch ? _categoryId : null;
+                      final items = <DropdownMenuItem<String?>>[
+                        ...filtered.map((c) => DropdownMenuItem<String?>(
+                              value: c.id,
+                              child: Text(c.label, style: TLText.body(size: 13)),
+                            )),
+                        DropdownMenuItem<String?>(
+                          value: _kNewCategorySentinel,
+                          child: Row(
+                            children: [
+                              const EviIcon('plus', size: 12, color: T.terracotta, stroke: 2),
+                              const SizedBox(width: 6),
+                              Text('Yeni kategori',
+                                  style: TLText.body(size: 13, color: T.terracotta, weight: FontWeight.w600)),
+                            ],
+                          ),
+                        ),
+                      ];
                       return _wrap(
                         title: 'Kategori',
                         child: DropdownButtonHideUnderline(
@@ -198,9 +218,17 @@ class _TransactionEditSheetState extends ConsumerState<TransactionEditSheet> {
                             value: value,
                             isExpanded: true,
                             hint: Text('Seç', style: TLText.body(color: T.inkMute, size: 13)),
-                            items: filtered.map((c) =>
-                              DropdownMenuItem(value: c.id, child: Text(c.label, style: TLText.body(size: 13)))).toList(),
-                            onChanged: (v) => setState(() => _categoryId = v),
+                            items: items,
+                            onChanged: (v) async {
+                              if (v == _kNewCategorySentinel) {
+                                final created = await showCategoryFormSheet(context, defaultKind: _kind);
+                                if (created != null && mounted) {
+                                  setState(() => _categoryId = created.id);
+                                }
+                                return;
+                              }
+                              setState(() => _categoryId = v);
+                            },
                           ),
                         ),
                       );

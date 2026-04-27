@@ -7,6 +7,7 @@ import '../../theme/app_theme.dart';
 import '../../theme/tokens.dart';
 import '../../widgets/evi_icon.dart';
 import '../../widgets/evi_widgets.dart';
+import '../categories/category_form_sheet.dart';
 
 class _DraftLine {
   String? merchant;
@@ -374,16 +375,48 @@ class _DraftCardState extends State<_DraftCard> {
     );
   }
 
+  // Sentinel value for the "Yeni kategori" item inside the dropdown. Picking
+  // it opens the category form sheet inline so the user doesn't have to bail
+  // out of the review flow to add a missing category — the AI extraction is
+  // not always going to find a perfect match in the household's existing list.
+  static const String _kNewCategorySentinel = '__new_category__';
+
   Widget _categoryDropdown(_DraftLine d) {
+    final items = [
+      ...widget.categories.where((c) => c.kind == d.kind).map(
+            (c) => DropdownMenuItem<String?>(
+              value: c.id,
+              child: Text(c.label, style: TLText.body(size: 13)),
+            ),
+          ),
+      DropdownMenuItem<String?>(
+        value: _kNewCategorySentinel,
+        child: Row(
+          children: [
+            const EviIcon('plus', size: 12, color: T.terracotta, stroke: 2),
+            const SizedBox(width: 6),
+            Text('Yeni kategori',
+                style: TLText.body(size: 13, color: T.terracotta, weight: FontWeight.w600)),
+          ],
+        ),
+      ),
+    ];
     return _Field(
       label: 'Kategori',
       child: DropdownButtonHideUnderline(
         child: DropdownButton<String?>(
           value: d.categoryId,
           isExpanded: true,
-          items: widget.categories.where((c) => c.kind == d.kind).map((c) =>
-            DropdownMenuItem(value: c.id, child: Text(c.label, style: TLText.body(size: 13)))).toList(),
-          onChanged: (v) {
+          items: items,
+          onChanged: (v) async {
+            if (v == _kNewCategorySentinel) {
+              final created = await showCategoryFormSheet(context, defaultKind: d.kind);
+              if (created != null) {
+                d.categoryId = created.id;
+              }
+              widget.onChange();
+              return;
+            }
             d.categoryId = v;
             widget.onChange();
           },
