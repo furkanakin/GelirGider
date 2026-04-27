@@ -66,15 +66,28 @@ class _VoiceScreenState extends ConsumerState<VoiceScreen> {
   }
 
   Future<void> _start() async {
+    // Defensive: if a previous session left the recorder still running (e.g.
+    // start() succeeded but a state update raced), stop it before opening a
+    // new one. record's start() throws on a busy recorder and we'd otherwise
+    // get stuck in a non-responsive UI state.
+    try {
+      if (await _recorder.isRecording()) {
+        await _recorder.stop();
+      }
+    } catch (_) {/* swallow — we're about to retry from a clean slate */}
+
     setState(() {
       _error = null;
       _elapsed = Duration.zero;
       _clipPath = null;
+      _recording = false;
     });
     if (!await _ensurePermission()) return;
 
     try {
       // Browsers natively encode webm/Opus; mobile gets AAC for max compat.
+      // Some Safari builds reject Opus — fall back to AAC if the first
+      // attempt throws.
       final config = RecordConfig(
         encoder: kIsWeb ? AudioEncoder.opus : AudioEncoder.aacLc,
         bitRate: 64000,
@@ -85,7 +98,24 @@ class _VoiceScreenState extends ConsumerState<VoiceScreen> {
       // handle won't open and start() throws / crashes. Web ignores the path
       // and uses an in-memory blob instead.
       final path = await _resolveOutputPath();
-      await _recorder.start(config, path: path);
+      try {
+        await _recorder.start(config, path: path);
+      } catch (e) {
+        if (kIsWeb) {
+          // Retry with AAC on web — Safari sometimes rejects Opus.
+          await _recorder.start(
+            const RecordConfig(
+              encoder: AudioEncoder.aacLc,
+              bitRate: 64000,
+              sampleRate: 16000,
+              numChannels: 1,
+            ),
+            path: path,
+          );
+        } else {
+          rethrow;
+        }
+      }
 
       _ampSub?.cancel();
       _ampSub = _recorder
@@ -104,7 +134,10 @@ class _VoiceScreenState extends ConsumerState<VoiceScreen> {
 
       setState(() => _recording = true);
     } catch (e) {
-      setState(() => _error = 'Kayıt başlatılamadı: $e');
+      setState(() {
+        _error = 'Kayıt başlatılamadı: $e';
+        _recording = false;
+      });
     }
   }
 
@@ -116,28 +149,40 @@ class _VoiceScreenState extends ConsumerState<VoiceScreen> {
   }
 
   Future<void> _stop() async {
+    // Flip UI state first so the button visually responds even if the
+    // recorder takes a moment to flush its file. Previously we awaited
+    // stop() *before* updating state, which meant a slow stop call (or one
+    // that threw) left the UI thinking it was still recording — which is
+    // exactly the "duraklatma çalışmıyor" symptom.
     _timer?.cancel();
     await _ampSub?.cancel();
     _ampSub = null;
+    if (mounted) setState(() => _recording = false);
+
     String? out;
     try {
       out = await _recorder.stop();
-    } catch (_) {
+    } catch (e) {
+      if (mounted) {
+        setState(() => _error = 'Kayıt durdurulamadı: $e');
+      }
       out = null;
     }
     if (mounted) {
-      setState(() {
-        _recording = false;
-        _clipPath = out;
-      });
+      setState(() => _clipPath = out);
     }
   }
 
   Future<void> _restart() async {
-    if (_recording) await _stop();
+    // Always go through stop() — it's idempotent now and clears the
+    // recorder regardless of the current `_recording` flag (which can lie if
+    // a previous start raced).
+    await _stop();
+    if (!mounted) return;
     setState(() {
       _clipPath = null;
       _elapsed = Duration.zero;
+      _error = null;
     });
     await _start();
   }

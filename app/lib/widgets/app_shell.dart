@@ -1,4 +1,4 @@
-﻿import 'package:flutter/material.dart';
+import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
 
@@ -10,24 +10,98 @@ import 'evi_widgets.dart';
 
 const kDesktopBreakpoint = 900.0;
 
-class AppShell extends ConsumerWidget {
+class AppShell extends ConsumerStatefulWidget {
   final Widget child;
   final String activeTab; // home | list | add | chart | people
   const AppShell({super.key, required this.child, required this.activeTab});
 
   @override
-  Widget build(BuildContext context, WidgetRef ref) {
+  ConsumerState<AppShell> createState() => _AppShellState();
+}
+
+class _AppShellState extends ConsumerState<AppShell> with SingleTickerProviderStateMixin {
+  late final AnimationController _dialCtrl;
+  bool _dialOpen = false;
+
+  @override
+  void initState() {
+    super.initState();
+    _dialCtrl = AnimationController(
+      vsync: this,
+      duration: const Duration(milliseconds: 240),
+    );
+  }
+
+  @override
+  void dispose() {
+    _dialCtrl.dispose();
+    super.dispose();
+  }
+
+  void _toggleDial() {
+    setState(() {
+      _dialOpen = !_dialOpen;
+      if (_dialOpen) {
+        _dialCtrl.forward();
+      } else {
+        _dialCtrl.reverse();
+      }
+    });
+  }
+
+  void _pickAndClose(String path) {
+    _toggleDial();
+    // Defer the navigation by one frame so the dial's reverse animation can
+    // start cleanly before we push a new route on top.
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (mounted) context.push(path);
+    });
+  }
+
+  @override
+  Widget build(BuildContext context) {
     final width = MediaQuery.of(context).size.width;
     final isDesktop = width >= kDesktopBreakpoint;
 
     if (isDesktop) {
-      return _DesktopShell(child: child, activeTab: activeTab);
+      return _DesktopShell(child: widget.child, activeTab: widget.activeTab);
     }
+
     return Scaffold(
       backgroundColor: T.cream,
       extendBody: true,
-      body: child,
-      bottomNavigationBar: _MobileTabBar(active: activeTab),
+      body: Stack(
+        children: [
+          widget.child,
+          // Backdrop — fades in with the dial. Tap dismisses.
+          AnimatedBuilder(
+            animation: _dialCtrl,
+            builder: (_, __) {
+              if (_dialCtrl.value == 0) return const SizedBox.shrink();
+              return Positioned.fill(
+                child: GestureDetector(
+                  onTap: _toggleDial,
+                  child: Container(
+                    color: Colors.black.withValues(alpha: 0.42 * _dialCtrl.value),
+                  ),
+                ),
+              );
+            },
+          ),
+          // Speed-dial cluster — sits just above the tab bar, three buttons
+          // fan out from the centre + button on a quick spring.
+          _SpeedDial(
+            controller: _dialCtrl,
+            onPick: _pickAndClose,
+          ),
+        ],
+      ),
+      bottomNavigationBar: _MobileTabBar(
+        active: widget.activeTab,
+        dialOpen: _dialOpen,
+        dialAnimation: _dialCtrl,
+        onAddTap: _toggleDial,
+      ),
     );
   }
 }
@@ -212,7 +286,16 @@ class _NavItem extends StatelessWidget {
 
 class _MobileTabBar extends StatelessWidget {
   final String active;
-  const _MobileTabBar({required this.active});
+  final bool dialOpen;
+  final Animation<double> dialAnimation;
+  final VoidCallback onAddTap;
+
+  const _MobileTabBar({
+    required this.active,
+    required this.dialOpen,
+    required this.dialAnimation,
+    required this.onAddTap,
+  });
 
   static const _tabs = [
     ('home', 'house-heart', 'Ev'),
@@ -226,7 +309,6 @@ class _MobileTabBar extends StatelessWidget {
     switch (id) {
       case 'home': c.go('/home'); break;
       case 'list': c.go('/list'); break;
-      case 'add': c.go('/add'); break;
       case 'chart': c.go('/monthly'); break;
       case 'people': c.go('/family'); break;
     }
@@ -263,16 +345,29 @@ class _MobileTabBar extends StatelessWidget {
                 return Expanded(
                   child: Center(
                     child: GestureDetector(
-                      onTap: () => _go(context, id),
-                      child: Container(
-                        width: 48,
-                        height: 48,
-                        decoration: BoxDecoration(
-                          color: T.terracotta,
-                          shape: BoxShape.circle,
-                          boxShadow: const [BoxShadow(color: Color(0x66C4593C), blurRadius: 12, offset: Offset(0, 4))],
-                        ),
-                        child: const Center(child: EviIcon('plus', size: 24, color: Colors.white, stroke: 2)),
+                      onTap: onAddTap,
+                      child: AnimatedBuilder(
+                        animation: dialAnimation,
+                        builder: (_, __) {
+                          // Rotate the + icon 45° as the dial opens, turning
+                          // it into an 'x'-like close affordance — gives the
+                          // user a clear "tap me again to dismiss" cue.
+                          return Container(
+                            width: 48,
+                            height: 48,
+                            decoration: BoxDecoration(
+                              color: T.terracotta,
+                              shape: BoxShape.circle,
+                              boxShadow: const [BoxShadow(color: Color(0x66C4593C), blurRadius: 12, offset: Offset(0, 4))],
+                            ),
+                            child: Center(
+                              child: Transform.rotate(
+                                angle: dialAnimation.value * 0.785, // 45° in rad
+                                child: const EviIcon('plus', size: 24, color: Colors.white, stroke: 2),
+                              ),
+                            ),
+                          );
+                        },
                       ),
                     ),
                   ),
@@ -307,6 +402,137 @@ class _MobileTabBar extends StatelessWidget {
                 ),
               );
             }).toList(),
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+/// Three-button speed dial that fans out above the tab bar's centre + button.
+///
+/// Buttons (left → right): Yaz, Sesli, Foto. Each is positioned on an arc so
+/// the cluster reads as a fan; staggered scale-in over ~240ms with the centre
+/// button arriving fractionally later than the side ones, which gives the
+/// fan a sense of weight without the user having to wait.
+class _SpeedDial extends StatelessWidget {
+  final AnimationController controller;
+  final void Function(String path) onPick;
+  const _SpeedDial({required this.controller, required this.onPick});
+
+  @override
+  Widget build(BuildContext context) {
+    final padBottom = MediaQuery.paddingOf(context).bottom;
+    // Centre of the + button in the tab bar: x = screen.width/2,
+    // distance from screen bottom ≈ padBottom + 12 (margin) + 32 (half height)
+    // = padBottom + 44.
+    final double dialBaseBottom = padBottom + 44;
+
+    // Each entry: (icon, label, bg tint, fg, route, arc dx, arc dy).
+    // dx/dy are pixel offsets of the button centre relative to the + button
+    // centre when the dial is fully open. T.butterTint/terraTint/forestTint
+    // are mutable (theme-swappable) so this list can't be const.
+    final items = <(String, String, Color, Color, String, double, double)>[
+      ('pen',    'Yaz',   T.butterTint, const Color(0xFF9A7A2D), '/text',  -86, -68),
+      ('mic',    'Sesli', T.terraTint,  T.terracotta,            '/voice',   0, -118),
+      ('camera', 'Foto',  T.forestTint, T.forest,                '/photo',  86, -68),
+    ];
+
+    return AnimatedBuilder(
+      animation: controller,
+      builder: (_, __) {
+        if (controller.value == 0) return const SizedBox.shrink();
+        return IgnorePointer(
+          ignoring: controller.value < 0.5,
+          child: Stack(
+            children: [
+              for (var i = 0; i < items.length; i++)
+                _SpeedDialItem(
+                  // Stagger: side buttons start at 0, centre at 0.05.
+                  progress: ((controller.value - (i == 1 ? 0.05 : 0)) / 0.95).clamp(0.0, 1.0),
+                  baseBottom: dialBaseBottom,
+                  dx: items[i].$6,
+                  dy: items[i].$7,
+                  icon: items[i].$1,
+                  label: items[i].$2,
+                  bg: items[i].$3,
+                  fg: items[i].$4,
+                  onTap: () => onPick(items[i].$5),
+                ),
+            ],
+          ),
+        );
+      },
+    );
+  }
+}
+
+class _SpeedDialItem extends StatelessWidget {
+  final double progress;     // 0..1
+  final double baseBottom;   // distance of the + button centre from screen bottom
+  final double dx;           // target x offset from + button centre
+  final double dy;           // target y offset from + button centre (negative = up)
+  final String icon;
+  final String label;
+  final Color bg;
+  final Color fg;
+  final VoidCallback onTap;
+  const _SpeedDialItem({
+    required this.progress,
+    required this.baseBottom,
+    required this.dx,
+    required this.dy,
+    required this.icon,
+    required this.label,
+    required this.bg,
+    required this.fg,
+    required this.onTap,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    final width = MediaQuery.sizeOf(context).width;
+    // Convert "from + button centre" into Positioned values from the
+    // bottom-left of the screen.
+    final left = (width / 2) + dx - 36; // 36 = half of the 72px-wide pill
+    final bottom = baseBottom + (-dy * progress) - 28; // 28 = half of pill height
+    return Positioned(
+      left: left,
+      bottom: bottom,
+      child: Opacity(
+        opacity: progress,
+        child: Transform.scale(
+          scale: 0.6 + 0.4 * progress,
+          child: GestureDetector(
+            onTap: progress > 0.6 ? onTap : null,
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                Container(
+                  width: 56,
+                  height: 56,
+                  decoration: BoxDecoration(
+                    color: bg,
+                    shape: BoxShape.circle,
+                    border: Border.all(color: T.line),
+                    boxShadow: const [
+                      BoxShadow(color: Color(0x143C2814), blurRadius: 14, offset: Offset(0, 6)),
+                    ],
+                  ),
+                  child: Center(child: EviIcon(icon, size: 22, color: fg, stroke: 1.8)),
+                ),
+                const SizedBox(height: 4),
+                Container(
+                  padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 2),
+                  decoration: BoxDecoration(
+                    color: Colors.white,
+                    borderRadius: BorderRadius.circular(8),
+                    border: Border.all(color: T.line),
+                  ),
+                  child: Text(label, style: TLText.body(size: 10, weight: FontWeight.w600, color: T.ink)),
+                ),
+              ],
+            ),
           ),
         ),
       ),

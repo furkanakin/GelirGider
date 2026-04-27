@@ -25,7 +25,16 @@ class HomeScreen extends ConsumerWidget {
 
     final dateLabel = DateFormat('EEEE, d MMMM', 'tr_TR').format(DateTime.now());
 
-    return RefreshIndicator(
+    // Quick-action panel is pinned just above the tab bar (Stack + Positioned).
+    // ListView keeps enough bottom padding so the AI tip card doesn't slide
+    // under the panel as the page scrolls. Tab bar is rendered by AppShell
+    // and sits at MediaQuery.padding.bottom + ~88 from the bottom.
+    final double tabBarSpace = MediaQuery.paddingOf(context).bottom + 88;
+    final double quickPanelHeight = 96;
+
+    return Stack(
+      children: [
+        RefreshIndicator(
       onRefresh: () async {
         ref.invalidate(transactionsProvider);
         ref.invalidate(reportProvider);
@@ -33,7 +42,7 @@ class HomeScreen extends ConsumerWidget {
         await ref.read(transactionsProvider(const TxQuery(limit: 5)).future);
       },
       child: ListView(
-        padding: const EdgeInsets.only(top: 20, bottom: 100),
+        padding: EdgeInsets.only(top: 20, bottom: tabBarSpace + quickPanelHeight + 16),
         children: [
           // Header
           ScreenHeader(
@@ -191,14 +200,29 @@ class HomeScreen extends ConsumerWidget {
             ),
           ),
 
-          // Hızlı kayıt — tab bar'ın hemen üstünde, parmağa en yakın yerde.
-          // Sıralama: Yazılı (sol) · Sesli (orta, primer aksiyon) · Foto (sağ)
-          const SectionHeader(label: 'Hızlı kayıt'),
-          Padding(
-            padding: const EdgeInsets.fromLTRB(20, 0, 20, 16),
+        ],
+      ),
+        ),
+        // Pinned quick-action panel — always reachable just above the tab bar.
+        // A short cream gradient under it hides whatever ListView content is
+        // scrolling past behind, so the panel always reads as "on top".
+        Positioned(
+          left: 0,
+          right: 0,
+          bottom: tabBarSpace,
+          child: Container(
+            padding: const EdgeInsets.fromLTRB(20, 16, 20, 8),
+            decoration: BoxDecoration(
+              gradient: LinearGradient(
+                begin: Alignment.topCenter,
+                end: Alignment.bottomCenter,
+                colors: [T.cream.withValues(alpha: 0), T.cream, T.cream],
+                stops: const [0, 0.4, 1],
+              ),
+            ),
             child: Row(
               children: [
-                Expanded(child: _QuickAction(icon: 'pen', label: 'Yaz', bg: T.butterTint, color: Color(0xFF9A7A2D), onTap: () => context.push('/text'))),
+                Expanded(child: _QuickAction(icon: 'pen', label: 'Yaz', bg: T.butterTint, color: const Color(0xFF9A7A2D), onTap: () => context.push('/text'))),
                 const SizedBox(width: 8),
                 Expanded(child: _QuickAction(icon: 'mic', label: 'Sesli', bg: T.terraTint, color: T.terracotta, onTap: () => context.push('/voice'))),
                 const SizedBox(width: 8),
@@ -206,8 +230,8 @@ class HomeScreen extends ConsumerWidget {
               ],
             ),
           ),
-        ],
-      ),
+        ),
+      ],
     );
   }
 }
