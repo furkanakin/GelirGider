@@ -1,82 +1,149 @@
-# Oturum durumu — son güncelleme 2026-04-26
+# Oturum durumu — son güncelleme 2026-04-27
 
 > **Yeni oturuma başladığında:** "docs/SESSION_STATE.md'yi oku, kaldığım yerden devam edelim" de.
-> Claude memory sistemi ek olarak `~/.claude/projects/E--GelirGider/memory/` altında profil/feedback/referans tutar (otomatik yüklenir).
+> Memory sistemi (`~/.claude/projects/E--GelirGider/memory/`) profil, feedback, deploy detaylarını
+> ayrıca tutar — otomatik yüklenir.
 
 ## Şu anda neredeyiz
 
-**Kod tarafı: BİTTİ.** Backend + Flutter app + Web/PWA hepsi yazıldı, test edildi, GitHub'da: https://github.com/furkanakin/GelirGider (public).
+**CANLI VE ÇALIŞIYOR.** Backend, web ve APK üretimde.
 
-**Bekleyen tek iş: Coolify'a production deploy.** Henüz canlıda hiçbir servis yok, sadece dev container `evimiz-api-test` localhost:8001'de.
+| Servis | URL / Yol | Notlar |
+|---|---|---|
+| Backend API | https://ggapi.kayai.space | FastAPI, Coolify deploy, port 8000 |
+| Backend docs | https://ggapi.kayai.space/docs | Swagger UI |
+| Web / PWA | https://ggapp.kayai.space | Flutter web nginx, service worker kapalı |
+| APK | `app/build/app/outputs/flutter-apk/app-release.apk` | 56.6 MB, imzalı, son build 2026-04-27 12:00 |
 
-## Yapılan son işler (kronolojik)
+**DB:** Postgres 17 (Coolify yönetimli), schema `evimiz`, 13 tablo, 001_init + 002_phase2 uygulanmış.
+**LLM:** llmgateway.io (OpenAI uyumlu) — text/JSON için varsayılan `qwen3-coder-next`,
+vision için `qwen2.5-vl-72b-instruct`, STT için `whisper-1`. Hepsinin fallback zinciri var.
 
-1. ✅ Backend: 24 endpoint, AI entegrasyonu (llmgateway.io), DB schema 2 dosya
-2. ✅ Flutter app: 11 ekran + ek ekranlar (settings/accounts/recurring/notifications/search/yearly/onboarding)
-3. ✅ Hata düzeltmeleri:
-   - Çıkış sorunu (eager refresh kaldırıldı)
-   - Edit panel navbar altında kalmıyor (`useSafeArea` + bottom inset)
-   - İşlemleri sola kaydırınca silinme (`Dismissible` + onay)
-   - Foto akışı: in-app live camera (`camera` paketi, image_picker yerine)
-4. ✅ Dark mode: kullanıcı kaldırılmasını istedi, sadece açık tema kullanılıyor
-5. ✅ Runtime API URL override: Settings → Sunucu → API adresi (APK build etmeden domain değiştirilebilir)
-6. ✅ Android imzalı APK (universal, ~86 MB), keystore `app/android/app/upload-keystore.jks` (gitignored, **yedeklenmeli**)
-7. ✅ Multi-stage `app/Dockerfile.web` (Coolify Flutter build + nginx)
-8. ✅ Git init, commit, GitHub push (public repo)
+**Kullanıcılar:**
+- `furkanakin1903@gmail.com` — Furkan'ın hesabı, kendi "Evimiz" hanesinin sahibi (owner)
+- `semadgn1103@gmail.com` — silindi (admin endpoint ile, eşi yeniden kayıt olacak)
 
-## Bekleyen adımlar — sırasıyla
+## Kayıt akışı (yeni)
 
-### 1. DNS
-- Domain seç (örn. `evimiz.tr`)
-- A kayıtları:
-  - `api.<domain>` → `91.108.102.148`
-  - `app.<domain>` → `91.108.102.148`
+Backend `/api/auth/register` artık iki yoldan biriyle:
+- `household_name` set → yeni hane oluşturur, kullanıcı owner olur
+- `invite_code` set → davet edenin hanesine member olarak katılır, yeni hane oluşturmaz
+- İkisi birden gönderilirse 400. Hiçbiri gönderilmezse user yaratılır ama hane'siz kalır
+  (UI bu duruma izin vermiyor — formda ya "Yeni hane" ya "Davet kodu" sekmesi seçili).
 
-### 2. Coolify backend deploy
-- New App → Public Repo → `https://github.com/furkanakin/GelirGider.git`
-- Base dir: `/backend`, Dockerfile: `Dockerfile`, port `8000`
-- Env vars (README.md'de tablo var):
-  - `DATABASE_URL` (Coolify Postgres internal hostname)
-  - `JWT_SECRET` (`openssl rand -hex 64`)
-  - `LLM_GATEWAY_API_KEY` (mevcut)
-  - `ALLOWED_ORIGINS=https://app.<domain>`
-- Domain: `https://api.<domain>`, health: `/health`
-- ⚠️ DB password yenile (chatte sızdı), Postgres `5858` portunu firewall'da kapat
+App ve web giriş ekranı bu iki sekmeyi gösteriyor (terracotta segmented toggle).
 
-### 3. DB schema apply
+## Coolify API tokenı ile yönettim
+
+- **Panel:** https://panel.kayai.space
+- **Sunucu IP:** 91.108.102.148 (Furkan'ın kendi VPS'i)
+- **API token:** `1|MnQ1oDnJLaGFYidQgwFTotShHHBsrxIdqu04WUDZffc00a1b`
+  → ⚠️ **Kullanıcı bunu revoke etmeli** (Profile → Keys & Tokens → sil). İşim bitince yapacağı söylendi.
+
+**Application UUID'ler** (API çağrıları için):
+- Backend: `g6bsn4npyrbsz6tchr7jps56`
+- Web: `nebphe6nz71nvk491bkc4g3z`
+- Postgres DB: `z7ysvcaoeh8kwwneblldmiq6`
+
+**Internal DB hostname:** `z7ysvcaoeh8kwwneblldmiq6` (Coolify Postgres container)
+**DB password:** `tLrsNRut37GTKxeIdvReaPQ5AXMQBnOo5zrUANedXQC0H4Fa1OaYABH8RwvUkkTY`
+(eski, sızdı, kullanıcı şimdilik "deneysel zaten" deyip rotate etmedi).
+
+**Deploy tetikleme:**
 ```bash
-psql -h <coolify_postgres_host> -p 5432 -U postgres -d postgres \
-  -f backend/sql/001_init.sql -f backend/sql/002_phase2.sql
+curl -X POST -H "Authorization: Bearer $TOKEN" \
+  "https://panel.kayai.space/api/v1/deploy?uuid=$APP_UUID&force=false"
 ```
 
-### 4. Coolify web/PWA deploy
-- New App → aynı repo → base dir `/`, Dockerfile location: `app/Dockerfile.web`, port `80`
-- Build arg: `API_BASE_URL=https://api.<domain>/api`
-- Domain: `https://app.<domain>`
+Status izleme: `GET /api/v1/deployments/{deployment_uuid}` → `status` alanı.
 
-### 5. Test ve dağıtım
-- **Furkan (Android):** APK Settings → Sunucu → API adresi → `https://api.<domain>/api`, yeniden giriş
-- **Eşi (iOS):** Safari'de `https://app.<domain>` → Paylaş → Ana Ekrana Ekle (`docs/IOS_PWA.md`)
-- Aile davet: Furkan Settings → Aile → Davet et → kod → eşine WhatsApp
+## Yapılan büyük değişiklikler (kronolojik)
 
-## Bilinen pürüzler / sonraya bırakılanlar
+1. ✅ DNS: `*.kayai.space → 91.108.102.148` wildcard zaten kurulu, kayıt eklemeye gerek olmadı
+2. ✅ Backend Coolify deploy (Dockerfile, /backend base dir, port 8000)
+3. ✅ DB schema: `001_init.sql` + `002_phase2.sql` backend container'ından psql ile uygulandı
+4. ✅ Web Coolify deploy (multi-stage Flutter SDK + nginx, Dockerfile.web)
+5. ✅ Bug: Web nginx Dockerfile HEALTHCHECK BusyBox `wget --spider` Coolify network'ünde Connection refused — direktif kaldırıldı
+6. ✅ Bug: Backend ports_exposes 3000→8000 düzeltildi (Coolify default 3000, backend 8000'de listen, 502 dönüyordu); Traefik labels API ile 8000'e zorlandı
+7. ✅ Register flow: hane otomatik oluşturma kaldırıldı, invite_code desteği eklendi (backend + Flutter UI)
+8. ✅ Voice akışı: `speech_to_text` çıkarıldı (Google Türkçe paket prompt'u yok), `record` paketi ile bayt kaydı + backend `/api/ai/voice/transcribe` (Whisper-1)
+9. ✅ Photo akışı: `google_mlkit_text_recognition` çıkarıldı, `/api/ai/photo/extract` doğrudan Qwen vision'a gönderiyor
+10. ✅ Settings model dropdown 17 modele genişletildi (Hızlı/Orta/Kaliteli grupları)
+11. ✅ Transaction silme bug'ı: Dismissible'ın onDismissed yarış koşulu, API çağrısı confirmDismiss'e taşındı, hep `false` döner; provider invalidate ile satır rebuild'de düşer
+12. ✅ Web PWA service worker kapatıldı (`--pwa-strategy=none`) — sürekli güncel sürüm
+13. ✅ iOS Safari "Uygulamayı yükle" banner'ı eklendi (`app/web/index.html` JS+CSS)
+14. ✅ Voice crash düzeltildi: `record.start(path: '')` mobilde fail ediyordu, `path_provider` ile `getTemporaryDirectory()`
+15. ✅ Admin DELETE endpoint eklendi: `DELETE /api/admin/users/by-email/{email}`, JWT_SECRET bearer guard
+16. ✅ `semadgn1103@gmail.com` kullanıcısı admin endpoint ile silindi
 
-- **Dark mode**: kaldırıldı ama kod `theme/theme_controller.dart` ve `_DarkPalette` hâlâ duruyor; kullanıcı isterse hızla yeniden açılabilir.
-- **iOS in-app camera**: web'de `camera` paketi yok, Photo screen'de iOS PWA'da galeri'ye düşer (mobil web kamera erişimi sınırlı). Mobil Android'de live camera çalışır.
-- **Audio dosyası backend'e gitmiyor:** Voice akışı sadece transcript metni gönderir (`/api/ai/transcribe-voice`), ses dosyası şu an upload edilmiyor — gerekirse `/api/attachments` ile genişletilebilir.
-- **Foto vision LLM:** şu an OCR'dan çıkan metin LLM'e gidiyor (text-only). Qwen-VL gibi vision moda geçmek istenirse `backend/app/llm.py` ve photo akışı revize edilir.
+## Bekleyen / sonraya bırakılan
 
-## Kritik dosyalar
+- **Eşi yeniden kayıt olacak:** `semadgn1103@gmail.com` ile. Kayıt formunda "Davet kodu" sekmesinde Furkan'ın gönderdiği kodu yapıştırarak Furkan'ın hanesine direkt katılır. (Bu eşin yapacağı bir aksiyon — Furkan ona kodu iletecek.)
+- **Coolify API tokenı:** Furkan revoke etmeli (Profile → Keys & Tokens → `claude-deploy` sil)
+- **DB password rotate:** Eski parola sızdı; "deneysel zaten" denildiği için ertelendi, prod'a açılırken rotate edilmeli
+- **Postgres public 5858 portu:** Zaten kapalı (`is_public: False` doğrulandı)
+- **iOS in-app camera:** Web'de `camera` paketi yok, iOS PWA'da Photo screen galeriye düşer
+- **Audio dosyası backend storage:** `/api/ai/voice/transcribe` ses dosyasını işler ama saklamıyor; istersen `/api/attachments` ile genişletilebilir
 
-| Dosya | Amaç |
+## Kritik dosyalar / endpointler
+
+| Yol | Amaç |
 |---|---|
-| `backend/Dockerfile` | Coolify backend |
-| `backend/.env.example` | Env şablonu (gerçek `.env` gitignored) |
-| `backend/sql/001_init.sql`, `002_phase2.sql` | DB schema |
-| `app/Dockerfile.web` | Coolify Flutter build + nginx (PWA) |
-| `app/android/app/upload-keystore.jks` | **YEDEKLE!** Kaybolursa app id çakışır |
-| `app/android/key.properties` | Keystore şifreleri (gitignored) |
-| `app/build/app/outputs/flutter-apk/app-release.apk` | Son imzalı APK |
-| `README.md` | Genel bakış + deploy özeti |
-| `docs/DEPLOY.md` | Detaylı Coolify deploy |
-| `docs/IOS_PWA.md` | Eşin için "Ana ekrana ekle" rehberi |
+| `backend/app/routers/auth.py` | register: invite_code OR household_name |
+| `backend/app/routers/ai.py` | classify-text, voice/transcribe (multipart), photo/extract (multipart), legacy text endpoints |
+| `backend/app/routers/admin.py` | DELETE /admin/users/by-email/{email} (JWT_SECRET bearer) |
+| `backend/app/llm.py` | LLMClient: chat_json, chat_json_with_image, transcribe_audio (her biri fallback'lı) |
+| `backend/app/config.py` | LLM model listeleri (default + fallback'lar) |
+| `app/lib/features/auth/login_screen.dart` | İki sekmeli register: Yeni hane / Davet kodu |
+| `app/lib/features/voice/voice_screen.dart` | record paketi + path_provider + bytes_loader (web/io split) |
+| `app/lib/features/voice/bytes_loader{,_io,_web}.dart` | Conditional import: dosya bayt okuma platformu |
+| `app/lib/features/photo/photo_screen.dart` | image bytes → /ai/photo/extract (OCR yok) |
+| `app/lib/features/list/list_screen.dart` | Dismissible: API confirmDismiss'te, hep false döner |
+| `app/lib/services/api_client.dart` | transcribeAudio + extractPhoto multipart, register inviteCode argümanı |
+| `app/lib/core/config.dart` | 17 LLM model listesi + grup eşlemesi |
+| `app/web/index.html` | iOS PWA install banner JS+CSS |
+| `app/Dockerfile.web` | --pwa-strategy=none (SW kapalı) |
+| `app/pubspec.yaml` | record + path_provider, dependency_overrides record_linux |
+
+## Admin user-delete kullanımı
+
+```bash
+curl -X DELETE \
+  -H "Authorization: Bearer <JWT_SECRET değeri>" \
+  https://ggapi.kayai.space/api/admin/users/by-email/<email>
+```
+
+JWT_SECRET şu an: `eefe162a25792a3f6e1f5d6ee3a37a4eb439d1ad1b5051486a30388c6d545cb40e82ee5e459a705b1ea72efdf44309812e3166bb816f753f6be5cf75d6e91218`
+(Coolify backend env'inde, rotate edilirse buradaki referansı da güncelle.)
+
+Cascade davranışı: kullanıcının yarattığı hane(ler)i siler, içindekileri (kategori, hesap, transaction, ai_jobs, notifications, quick_entries, recurring, attachments, invites) FK CASCADE temizler. Davet ettiği invite'lar silinir, kabul ettiği invite'larda accepted_by null'a çekilir.
+
+## Deploy yeniden tetikleme
+
+Backend:
+```bash
+curl -X POST -H "Authorization: Bearer 1|MnQ1oDnJLaGFYidQgwFTotShHHBsrxIdqu04WUDZffc00a1b" \
+  "https://panel.kayai.space/api/v1/deploy?uuid=g6bsn4npyrbsz6tchr7jps56&force=false"
+```
+
+Web:
+```bash
+curl -X POST -H "Authorization: Bearer 1|MnQ1oDnJLaGFYidQgwFTotShHHBsrxIdqu04WUDZffc00a1b" \
+  "https://panel.kayai.space/api/v1/deploy?uuid=nebphe6nz71nvk491bkc4g3z&force=false"
+```
+
+APK rebuild (Windows PowerShell):
+```powershell
+cd E:\GelirGider\app
+& "C:\Users\Furkan\flutter-git\bin\flutter.bat" pub get
+& "C:\Users\Furkan\flutter-git\bin\flutter.bat" build apk --release `
+  --dart-define=API_BASE_URL=https://ggapi.kayai.space/api
+```
+
+## Bilinen hassasiyetler
+
+- **Push hangs**: Git Credential Manager Windows'ta zaman zaman GUI prompt'unda takılıyor. Çözüm: kullanıcıdan terminal'de manuel `git push origin main` istemek.
+- **Web service worker**: kapalı tutuldu. Tekrar açılırsa cache invalidate sorunu döner.
+- **`record` paketi**: `record_linux` 0.7.2 transitive dep'i `record_platform_interface` 1.5.0 ile uyumsuz; `pubspec.yaml`'da `dependency_overrides: record_linux: ^1.3.0` zorunlu.
+- **Flutter `--pwa-strategy=none` deprecation uyarısı veriyor** ama hâlâ çalışıyor (gelecek Flutter sürümünde kalkacak — sürüm yükselince başka çare gerek).
+- **APK keystore:** `app/android/app/upload-keystore.jks` (gitignore'lu) — kullanıcı yedeklemeli, kaybolursa app id ile bir daha imzalanamaz.
