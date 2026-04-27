@@ -51,16 +51,16 @@ async def admin_delete_user(
     # 1. wipe sessions
     await session.execute(delete(RefreshToken).where(RefreshToken.user_id == user_id))
 
-    # 2. detach from invites
+    # 2. invites — `invited_by` is NOT NULL, so we drop any invites this user
+    #    issued (they're useless without the inviter anyway). For invites
+    #    they accepted, just clear `accepted_by` so the historical row stays.
     await session.execute(
         update(HouseholdInvite)
         .where(HouseholdInvite.accepted_by == user_id)
         .values(accepted_by=None, accepted_at=None)
     )
     await session.execute(
-        update(HouseholdInvite)
-        .where(HouseholdInvite.invited_by == user_id)
-        .values(invited_by=None)
+        delete(HouseholdInvite).where(HouseholdInvite.invited_by == user_id)
     )
 
     # 3. household_members rows for this user (cascade keeps their txs intact —
