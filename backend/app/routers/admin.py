@@ -8,9 +8,9 @@ also invalidates every issued access token, so it's the right blast radius.
 from __future__ import annotations
 
 from fastapi import APIRouter, Depends, Header, HTTPException, status
-from sqlalchemy import delete, select, update
-from sqlalchemy.ext.asyncio import AsyncSession
 from pydantic import EmailStr
+from sqlalchemy import delete, select, text, update
+from sqlalchemy.ext.asyncio import AsyncSession
 
 from ..config import get_settings
 from ..db import get_session
@@ -48,35 +48,64 @@ async def admin_delete_user(
 
     user_id = user.id
 
-    # 1. wipe sessions
-    await session.execute(delete(RefreshToken).where(RefreshToken.user_id == user_id))
+    # The schema has NOT-NULL FKs from several tables to users.id without
+    # ON DELETE CASCADE (households.created_by, transactions.user_id,
+    # ai_jobs.user_id, notifications.user_id, quick_entries.user_id,
+    # household_invites.invited_by). Deleting a user fails until those
+    # references are gone or pointed elsewhere. Strategy:
+    #   1. Delete invites this user issued (kill outright — invited_by
+    #      is NOT NULL) and detach invites they accepted.
+    #   2. Drop refresh tokens.
+    #   3. Drop households they created — CASCADE wipes that household's
+    #      categories, accounts, transactions, ai_jobs, notifications,
+    #      quick_entries, recurring templates, attachments, invites.
+    #   4. Drop their memberships in OTHER households.
+    #   5. Best-effort cleanup of cross-household activity (rare).
+    #   6. Delete the user.
 
-    # 2. invites — `invited_by` is NOT NULL, so we drop any invites this user
-    #    issued (they're useless without the inviter anyway). For invites
-    #    they accepted, just clear `accepted_by` so the historical row stays.
+    await session.execute(
+        delete(HouseholdInvite).where(HouseholdInvite.invited_by == user_id)
+    )
     await session.execute(
         update(HouseholdInvite)
         .where(HouseholdInvite.accepted_by == user_id)
         .values(accepted_by=None, accepted_at=None)
     )
+    await session.execute(delete(RefreshToken).where(RefreshToken.user_id == user_id))
+
+    # Households they created — CASCADEs through everything inside.
+    await session.execute(delete(Household).where(Household.created_by == user_id))
+
+    # Cross-household activity. Deleting their actions in someone else's
+    # household is a judgment call — for our use case (recently-registered
+    # users we want gone), the rows shouldn't exist; the explicit deletes
+    # below are insurance against a partially-shared scenario.
     await session.execute(
-        delete(HouseholdInvite).where(HouseholdInvite.invited_by == user_id)
+        text("DELETE FROM evimiz.transactions WHERE user_id = :uid"),
+        {"uid": user_id},
+    )
+    await session.execute(
+        text("UPDATE evimiz.transactions SET actor_user_id = NULL WHERE actor_user_id = :uid"),
+        {"uid": user_id},
+    )
+    await session.execute(
+        text("DELETE FROM evimiz.ai_jobs WHERE user_id = :uid"),
+        {"uid": user_id},
+    )
+    await session.execute(
+        text("DELETE FROM evimiz.notifications WHERE user_id = :uid"),
+        {"uid": user_id},
+    )
+    await session.execute(
+        text("DELETE FROM evimiz.quick_entries WHERE user_id = :uid"),
+        {"uid": user_id},
     )
 
-    # 3. household_members rows for this user (cascade keeps their txs intact —
-    # if you also need to drop empty households, do it manually).
     await session.execute(
         delete(HouseholdMember).where(HouseholdMember.user_id == user_id)
     )
 
-    # 4. null out households they created (so we don't break FKs)
-    await session.execute(
-        update(Household)
-        .where(Household.created_by == user_id)
-        .values(created_by=None)
-    )
-
-    # 5. drop the user row itself
+    # Finally drop the user row itself.
     await session.execute(delete(User).where(User.id == user_id))
 
     await session.commit()
