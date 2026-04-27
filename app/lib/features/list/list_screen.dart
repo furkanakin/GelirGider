@@ -343,23 +343,31 @@ class _SwipeableRow extends ConsumerWidget {
           ],
         ),
       ),
-      // We do BOTH confirm AND the API call inside `confirmDismiss` and always
-      // return false. The list re-renders on `ref.invalidate` and Flutter
-      // disposes the row naturally — far safer than `onDismissed` racing the
-      // dismiss animation against an async network call.
+      // Two-bug fix:
+      //   1) Dialog action buttons use the *dialog's* BuildContext (dialogCtx),
+      //      not the row's outer context. With useRootNavigator defaults
+      //      (showDialog: true) and the row sitting under the ShellRoute's
+      //      nested navigator, popping with the outer context can target the
+      //      wrong route.
+      //   2) Provider invalidation is deferred until *after* the dismiss
+      //      animation finishes. Returning `true` lets Dismissible animate
+      //      the row out cleanly; invalidating providers immediately would
+      //      rebuild the parent and dispose Dismissible's AnimationController
+      //      mid-animation, throwing an uncaught exception (the black /
+      //      blank-screen symptom on mobile and web).
       confirmDismiss: (_) async {
         final ok = await showDialog<bool>(
           context: context,
-          builder: (_) => AlertDialog(
+          builder: (dialogCtx) => AlertDialog(
             title: const Text('İşlemi sil'),
             content: Text('${tx.merchant ?? "Bu işlem"} silinsin mi?'),
             actions: [
               TextButton(
-                onPressed: () => Navigator.of(context).pop(false),
+                onPressed: () => Navigator.of(dialogCtx).pop(false),
                 child: const Text('Vazgeç'),
               ),
               FilledButton(
-                onPressed: () => Navigator.of(context).pop(true),
+                onPressed: () => Navigator.of(dialogCtx).pop(true),
                 style: FilledButton.styleFrom(backgroundColor: T.alert),
                 child: const Text('Sil'),
               ),
@@ -369,15 +377,6 @@ class _SwipeableRow extends ConsumerWidget {
         if (ok != true) return false;
         try {
           await ref.read(apiProvider).deleteTransaction(tx.id);
-          ref.invalidate(transactionsProvider);
-          ref.invalidate(reportProvider);
-          if (context.mounted) {
-            ScaffoldMessenger.of(context).showSnackBar(SnackBar(
-              backgroundColor: T.ink,
-              duration: const Duration(seconds: 2),
-              content: Text('İşlem silindi', style: TLText.body(color: Colors.white)),
-            ));
-          }
         } catch (e) {
           if (context.mounted) {
             ScaffoldMessenger.of(context).showSnackBar(SnackBar(
@@ -385,8 +384,23 @@ class _SwipeableRow extends ConsumerWidget {
               content: Text('Silinemedi: $e', style: const TextStyle(color: Colors.white)),
             ));
           }
+          return false;
         }
-        return false;
+        if (context.mounted) {
+          ScaffoldMessenger.of(context).showSnackBar(SnackBar(
+            backgroundColor: T.ink,
+            duration: const Duration(seconds: 2),
+            content: Text('İşlem silindi', style: TLText.body(color: Colors.white)),
+          ));
+        }
+        // Defer the refresh past Dismissible's dismiss animation
+        // (kDismissDuration ≈ 200ms; we round up to 320ms for safety).
+        Future<void>.delayed(const Duration(milliseconds: 320), () {
+          if (!context.mounted) return;
+          ref.invalidate(transactionsProvider);
+          ref.invalidate(reportProvider);
+        });
+        return true;
       },
       child: _Row(tx: tx, cats: cats, members: members, isLast: isLast),
     );

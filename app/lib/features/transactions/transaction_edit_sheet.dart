@@ -84,15 +84,22 @@ class _TransactionEditSheetState extends ConsumerState<TransactionEditSheet> {
   }
 
   Future<void> _delete() async {
+    // IMPORTANT: use the dialog's own BuildContext (`dialogCtx`) to pop —
+    // not the sheet's outer context. showDialog opens on the root navigator
+    // (useRootNavigator: true) while showModalBottomSheet sits on the local
+    // navigator. Calling Navigator.of(outerCtx).pop here would pop the
+    // *sheet* instead of the dialog, leaving the AlertDialog stuck on screen
+    // and `await showDialog` hanging — the symptom users saw as "Sil
+    // butonuna basıyorum, hiçbir şey olmuyor".
     final ok = await showDialog<bool>(
       context: context,
-      builder: (_) => AlertDialog(
+      builder: (dialogCtx) => AlertDialog(
         title: const Text('Sil'),
         content: const Text('Bu işlem silinsin mi?'),
         actions: [
-          TextButton(onPressed: () => Navigator.of(context).pop(false), child: const Text('Vazgeç')),
+          TextButton(onPressed: () => Navigator.of(dialogCtx).pop(false), child: const Text('Vazgeç')),
           FilledButton(
-            onPressed: () => Navigator.of(context).pop(true),
+            onPressed: () => Navigator.of(dialogCtx).pop(true),
             style: FilledButton.styleFrom(backgroundColor: T.alert),
             child: const Text('Sil'),
           ),
